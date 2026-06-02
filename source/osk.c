@@ -43,28 +43,41 @@ static bool name_ok(const char* s) {
   return true;
 }
 
-static void osk_field(const char* buf) {
-  char shown[40];
-  int len = (int)strlen(buf);
-  if (len <= 28) {
-    strcpy(shown, buf);
-  } else {                       /* show the tail so the caret stays visible */
-    shown[0] = '~';
-    memcpy(shown + 1, buf + len - 27, 27);
-    shown[28] = 0;
-  }
+/* Text field with a movable caret. Draws a horizontal window of the buffer,
+ * one cell per byte, and marks the editable cell (the caret) with a WHITE box
+ * and BLACK text (inverse video) — so the user can see exactly where the next
+ * insert/backspace lands. The window scrolls to keep the caret on screen.
+ * NOTE: one byte == one cell. The QWERTY keyboard only inserts ASCII, so this
+ * is exact for typed text; a pre-filled multi-byte UTF-8 name would be edited
+ * per byte (fine for the common ASCII case). */
+static void osk_field(const char* buf, int len, int cpos) {
   ui_panel(4, 16, 232, 14, UI_PANEL, UI_BORDER);
-  ui_text(8, 19, UI_TEXT, len ? shown : "(empty)");
+  const int x0 = 8, y = 19, cols = 28;
+  int scroll = (cpos > cols - 1) ? cpos - (cols - 1) : 0;   /* keep caret visible */
+  for (int i = 0; i < cols; i++) {
+    int ci = scroll + i;
+    if (ci > len) break;
+    int x = x0 + i * 8;
+    char ch[2];
+    ch[0] = (ci < len) ? buf[ci] : ' ';    /* caret can sit just past the last char */
+    ch[1] = 0;
+    if (ci == cpos) {                        /* editable cell: white box, black text */
+      m3_rect(x, y, x + 8, y + UI_ROW_H, RGB15(31, 31, 31));
+      ui_text(x, y, RGB15(0, 0, 0), ch);
+    } else if (ci < len) {
+      ui_text(x, y, UI_TEXT, ch);
+    }
+  }
 }
 
-static void osk_render(const char* prompt, const char* buf, int cr, int cc,
-                       const char* warn) {
+static void osk_render(const char* prompt, const char* buf, int len, int cpos,
+                       int cr, int cc, const char* warn) {
   ui_clear();
   char p[40];
   ui_truncate(p, prompt, 29);
   ui_text(2, 0, UI_TITLE, p);
 
-  osk_field(buf);
+  osk_field(buf, len, cpos);
 
   for (int r = 0; r < OSK_ROWS; r++) {
     int y = 44 + r * 13;
@@ -77,7 +90,7 @@ static void osk_render(const char* prompt, const char* buf, int cr, int cc,
   }
 
   char f[40];
-  ui_truncate(f, warn ? warn : "A type B del  ST ok  SE cancel", 29);
+  ui_truncate(f, warn ? warn : "A ins B del  L/R move  ST ok", 29);
   ui_text(2, 150, warn ? UI_WARN : UI_DIM, f);
 }
 
@@ -91,15 +104,17 @@ bool osk_input(const char* prompt, const char* initial, char* out, int cap) {
   }
 
   int cr = 0, cc = 0;
+  int cpos = len;          /* text caret: 0..len (len = just past the last char) */
   bool dirty = true;
   const char* warn = NULL;
 
   while (1) {
-    if (cc >= rowlen(cr)) cc = rowlen(cr) - 1;   /* keep cursor in-row */
-    if (dirty) { osk_render(prompt, buf, cr, cc, warn); dirty = false; }
+    if (cc >= rowlen(cr)) cc = rowlen(cr) - 1;   /* keep grid cursor in-row */
+    if (dirty) { osk_render(prompt, buf, len, cpos, cr, cc, warn); dirty = false; }
     osk_vsync();
 
-    u16 k = key_hit(KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT |
+    /* d-pad moves the char-grid cursor; L/R (shoulders) move the TEXT caret. */
+    u16 k = key_hit(KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT | KEY_L | KEY_R |
                     KEY_A | KEY_B | KEY_START | KEY_SELECT);
     if (!k) continue;
     dirty = true;
@@ -120,8 +135,22 @@ bool osk_input(const char* prompt, const char* initial, char* out, int cap) {
         return true;
       }
     }
-    else if (k & KEY_A) { if (len < OSK_MAXLEN) { buf[len++] = KB[cr][cc]; buf[len] = 0; } }
-    else if (k & KEY_B) { if (len > 0) buf[--len] = 0; }
+    else if (k & KEY_A) {                    /* insert the grid char AT the caret */
+      if (len < OSK_MAXLEN) {
+        for (int j = len; j > cpos; j--) buf[j] = buf[j - 1];
+        buf[cpos] = KB[cr][cc];
+        len++; cpos++;
+        buf[len] = 0;
+      }
+    }
+    else if (k & KEY_B) {                    /* delete the char BEFORE the caret */
+      if (cpos > 0) {
+        for (int j = cpos - 1; j < len; j++) buf[j] = buf[j + 1];
+        len--; cpos--;
+      }
+    }
+    else if (k & KEY_L) { if (cpos > 0)   cpos--; }   /* caret left  */
+    else if (k & KEY_R) { if (cpos < len) cpos++; }   /* caret right */
     else if (k & KEY_UP)    { cr = (cr == 0) ? OSK_ROWS - 1 : cr - 1; }
     else if (k & KEY_DOWN)  { cr = (cr + 1) % OSK_ROWS; }
     else if (k & KEY_LEFT)  { int rl = rowlen(cr); cc = (cc == 0) ? rl - 1 : cc - 1; }
