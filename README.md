@@ -6,6 +6,11 @@ family described in [`../../docs/ROADMAP.md`](../../docs/ROADMAP.md) (Project A)
 
 ## Status
 
+**Code-complete (Phases 0–3), release candidate — builds clean.** The only
+remaining gate is the hardware sign-off (the SD write path isn't emulated). See
+[RELEASE-STATUS.md](RELEASE-STATUS.md) and the consolidated
+[HARDWARE-SIGNOFF.md](HARDWARE-SIGNOFF.md).
+
 **Phase 0 (read-only browser)** — runs on **both** carts; validated on real hardware:
 
 - Directory listing with the `[..]` up-entry, folders sorted before files

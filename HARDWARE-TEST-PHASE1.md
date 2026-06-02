@@ -1,5 +1,8 @@
 # Phase 1 hardware sign-off checklist (first WRITE phase)
 
+> **Superseded by [HARDWARE-SIGNOFF.md](HARDWARE-SIGNOFF.md)** — the consolidated
+> master checklist covering all of Phases 0–3. This file is kept for history.
+
 Per CLAUDE.md convention 7, Phase 1 (mkdir / delete / attributes) is **not "done"
 until validated on real hardware** — the SD write path is invisible to emulators
 (it no-ops or fake-succeeds), so a clean compile + code review prove nothing about
