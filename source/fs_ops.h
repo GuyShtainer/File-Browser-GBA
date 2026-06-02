@@ -68,6 +68,18 @@ FRESULT fsop_chmod(const char* path, uint8_t set, uint8_t mask);
  * the volume use fsop_rename instead — it is atomic and needs no copy. */
 FRESULT fsop_copy(const char* src, const char* dst);
 
+/* One byte edit for the hex editor: set byte at `off` to `val`. */
+typedef struct { uint32_t off; uint8_t val; } HexEdit;
+
+/* Apply `n` byte edits to `path` SAFELY (the highest-risk op, so it never edits
+ * in place): stream the original into a temp with the edits applied, then
+ * byte-verify the temp equals original-with-edits, then back up the original to
+ * "<path>.bak~" and atomically rename the temp over it. On any failure the
+ * original is left untouched (temp removed), or restored from the backup if the
+ * final rename fails. File size is preserved (edits must be at offsets < size).
+ * Returns FR_OK, or FR_INT_ERR if the written temp fails verification. */
+FRESULT fsop_apply_edits(const char* path, const HexEdit* edits, int n);
+
 /* Delete a file or an entire directory tree. For a non-empty directory it
  * recursively removes the contents first, using an EXPLICIT stack (never C
  * recursion — the GBA IWRAM stack is only 32 KiB) bounded by

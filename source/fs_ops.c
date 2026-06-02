@@ -292,3 +292,82 @@ FRESULT fsop_copy(const char* src, const char* dst) {
   if (fno.fattrib & AM_DIR) return copy_tree(src, dst);
   return copy_one_file(src, dst);
 }
+
+/* ---- hex-editor verified write ----------------------------------------- */
+
+static uint8_t FS_EWRAM s_cmpbuf[4096] __attribute__((aligned(4)));   /* verify pass */
+
+/* Overwrite the bytes in [base, base+len) that fall under an edit. */
+static void apply_edits_chunk(uint8_t* buf, uint64_t base, UINT len,
+                              const HexEdit* edits, int n) {
+  for (int i = 0; i < n; i++)
+    if (edits[i].off >= base && edits[i].off < base + len)
+      buf[edits[i].off - base] = edits[i].val;
+}
+
+FRESULT fsop_apply_edits(const char* path, const HexEdit* edits, int n) {
+  char tmp[FS_PATH_CAP], bak[FS_PATH_CAP];
+  if ((unsigned)strlen(path) + 9 >= FS_PATH_CAP) return FR_NOT_ENOUGH_CORE;
+  strcpy(tmp, path); strcat(tmp, ".hexnew~");
+  strcpy(bak, path); strcat(bak, ".bak~");
+
+  /* 1. write tmp = original with edits applied */
+  FIL fin, fout;
+  FRESULT fr = f_open(&fin, path, FA_READ);
+  if (fr != FR_OK) return fr;
+  fr = f_open(&fout, tmp, FA_WRITE | FA_CREATE_ALWAYS);
+  if (fr != FR_OK) { f_close(&fin); return fr; }
+  uint64_t pos = 0;
+  for (;;) {
+    UINT br = 0, bw = 0;
+    fr = f_read(&fin, s_copybuf, sizeof(s_copybuf), &br);
+    if (fr != FR_OK || br == 0) break;
+    apply_edits_chunk(s_copybuf, pos, br, edits, n);
+    fr = f_write(&fout, s_copybuf, br, &bw);
+    if (fr != FR_OK) break;
+    if (bw < br) { fr = FR_DENIED; break; }   /* disk full */
+    pos += br;
+  }
+  FRESULT fc = f_close(&fout);
+  f_close(&fin);
+  if (fr == FR_OK) fr = fc;
+  if (fr != FR_OK) { f_unlink(tmp); return fr; }
+
+  /* 2. verify: tmp must equal original-with-edits, byte for byte */
+  fr = f_open(&fin, path, FA_READ);
+  if (fr != FR_OK) { f_unlink(tmp); return fr; }
+  FIL fchk;
+  fr = f_open(&fchk, tmp, FA_READ);
+  if (fr != FR_OK) { f_close(&fin); f_unlink(tmp); return fr; }
+  pos = 0;
+  bool ok = true;
+  for (;;) {
+    UINT ba = 0, bb = 0;
+    FRESULT ra = f_read(&fin,  s_copybuf, sizeof(s_copybuf), &ba);
+    FRESULT rb = f_read(&fchk, s_cmpbuf,  sizeof(s_cmpbuf),  &bb);
+    if (ra != FR_OK || rb != FR_OK || ba != bb) { ok = false; break; }
+    if (ba == 0) break;                       /* clean EOF on both */
+    apply_edits_chunk(s_copybuf, pos, ba, edits, n);
+    if (memcmp(s_copybuf, s_cmpbuf, ba) != 0) { ok = false; break; }
+    pos += ba;
+  }
+  f_close(&fin);
+  f_close(&fchk);
+  if (!ok) { f_unlink(tmp); return FR_INT_ERR; }   /* verify failed: original untouched */
+
+  /* 3. swap: back up the original, then move the verified temp into place */
+  FILINFO fno;
+  if (f_stat(bak, &fno) == FR_OK) {                 /* replace a prior backup */
+    if (fno.fattrib & AM_RDO) f_chmod(bak, 0, AM_RDO);
+    f_unlink(bak);
+  }
+  fr = f_rename(path, bak);                          /* original survives as <path>.bak~ */
+  if (fr != FR_OK) { f_unlink(tmp); return fr; }
+  fr = f_rename(tmp, path);
+  if (fr != FR_OK) {                                 /* restore on failure */
+    if (f_rename(bak, path) == FR_OK) f_unlink(tmp); /* restored -> drop the stray temp */
+    /* else: original survives as <path>.bak~ and the new bytes as <path>.hexnew~ */
+    return fr;
+  }
+  return FR_OK;
+}
