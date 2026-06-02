@@ -409,7 +409,8 @@ static bool do_mkdir(void) {
 }
 
 static bool do_delete(const FsEntry* e) {
-  char np[PATH_MAX], l1[48], nb[34];
+  /* nb/l1 hold a UTF-8 name truncated to N cols -> up to ~4N bytes; size for the worst case. */
+  char np[PATH_MAX], l1[128], nb[128];
   if (!path_join(g_cwd, e->name, np)) { msg_screen("Path too long", UI_WARN, NULL); return false; }
   ui_truncate(nb, e->name, 22);
   siprintf(l1, "Delete %s ?", nb);
@@ -601,7 +602,7 @@ static bool actions_menu(const FsEntry* e) {
   while (1) {
     if (dirty) {
       ui_clear();
-      char hb[48], nb[28], hh[48];
+      char hb[128], nb[128], hh[128];   /* UTF-8 name -> ~4 bytes/col; size for worst case */
       ui_truncate(nb, e ? e->name : "(parent)", 18);
       siprintf(hb, "Actions: %s", nb);
       ui_truncate(hh, hb, 29);
@@ -680,7 +681,7 @@ static bool edit_set(uint32_t off, uint8_t val, uint8_t base) {
 static void render_view(const char* name, uint64_t size, uint64_t off,
                         const uint8_t* buf, uint32_t got, bool hex) {
   ui_clear();
-  char line[80], nb[64], hbuf[96];
+  char line[128], nb[128], hbuf[96];   /* UTF-8 name -> ~4 bytes/col; size for worst case */
   ui_truncate(nb, name, 20);
   siprintf(hbuf, "%s [%s]", nb, g_editing ? "EDIT" : hex ? "HEX" : "TXT");
   ui_truncate(line, hbuf, 29);
