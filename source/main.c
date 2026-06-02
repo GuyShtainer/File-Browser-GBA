@@ -58,6 +58,11 @@ static bool               g_sortrev = false;
 static uint64_t           g_free = 0, g_total = 0;
 static bool               g_free_ok = false;
 
+/* clipboard for copy/cut/paste (paste target is the current directory) */
+typedef enum { CLIP_NONE, CLIP_COPY, CLIP_CUT } ClipOp;
+static char     EWRAM_BSS g_clip_path[PATH_MAX];
+static ClipOp             g_clip_op = CLIP_NONE;
+
 /* ---- frame tick + input ------------------------------------------------- */
 
 static void vsync(void) { VBlankIntrWait(); key_poll(); }
@@ -257,7 +262,15 @@ static void render_browser(int sel, int top) {
   ui_truncate(stt, st, 29);
   ui_text(2, STATUS_Y, UI_OK, stt);
 
-  ui_text(2, FOOT_Y, UI_DIM, "A open B up  ST sort  SE menu");
+  if (g_clip_op != CLIP_NONE) {
+    char fb[128], nbf[40], ft[128];
+    ui_truncate(nbf, base_name(g_clip_path), 16);
+    siprintf(fb, "[%s] %s  SE:paste", g_clip_op == CLIP_CUT ? "CUT" : "COPY", nbf);
+    ui_truncate(ft, fb, 29);
+    ui_text(2, FOOT_Y, UI_WARN, ft);
+  } else {
+    ui_text(2, FOOT_Y, UI_DIM, "A open B up  ST sort  SE menu");
+  }
 }
 
 static void properties_screen(const FsEntry* e) {
@@ -388,6 +401,82 @@ static bool do_rename(const FsEntry* e) {
   return true;
 }
 
+/* Pick a non-colliding sidecar path (dst + ".old~[N]") to hold the existing
+ * item during a safe overwrite. Returns false if no free name fits PATH_MAX. */
+static bool sidecar_name(const char* path, char* out) {
+  if ((unsigned)strlen(path) + 8 >= PATH_MAX) return false;   /* room for ".old~NN" */
+  FILINFO fno;
+  for (int i = 0; i < 20; i++) {
+    if (i == 0) siprintf(out, "%s.old~", path);
+    else        siprintf(out, "%s.old~%d", path, i);
+    if (f_stat(out, &fno) != FR_OK) return true;              /* this name is free */
+  }
+  return false;
+}
+
+static void do_copy(const FsEntry* e) {
+  if (path_join(g_cwd, e->name, g_clip_path)) g_clip_op = CLIP_COPY;
+}
+
+static void do_cut(const FsEntry* e) {
+  if (path_join(g_cwd, e->name, g_clip_path)) g_clip_op = CLIP_CUT;
+}
+
+static bool do_paste(void) {
+  if (g_clip_op == CLIP_NONE) return false;
+  const char* base = base_name(g_clip_path);
+  char dst[PATH_MAX];
+  if (!path_join(g_cwd, base, dst)) { msg_screen("Path too long", UI_WARN, NULL); return false; }
+
+  if (!strcmp(dst, g_clip_path)) {                  /* same folder */
+    msg_screen("Already here", UI_WARN, "Paste into a different folder");
+    return false;
+  }
+  unsigned sl = (unsigned)strlen(g_clip_path);      /* refuse dst inside src (folder into itself) */
+  if (!strncmp(dst, g_clip_path, sl) && dst[sl] == '/') {
+    msg_screen("Cannot paste", UI_WARN, "destination is inside source");
+    return false;
+  }
+
+  FILINFO fno;
+  char bak[PATH_MAX];
+  bool had_existing = (f_stat(dst, &fno) == FR_OK);
+  if (had_existing) {                               /* collision -> confirm overwrite */
+    char l1[48], nb[34];
+    ui_truncate(nb, base, 20);
+    siprintf(l1, "Overwrite %s ?", nb);
+    if (!confirm(l1, "Old kept until new is written")) return false;
+    /* Safe swap (rule #3 — never destroy the original until the replacement is
+     * in place): move the existing item aside first, so a failed paste rolls
+     * back instead of leaving the user with neither the old nor a full new. */
+    if (!sidecar_name(dst, bak)) { msg_screen("Overwrite failed", UI_WARN, "name too long"); return false; }
+    FRESULT br = fsop_rename(dst, bak);
+    if (br != FR_OK) { msg_screen("Overwrite failed", UI_WARN, fr_str(br)); return false; }
+  }
+
+  show_msg(g_clip_op == CLIP_CUT ? "Moving..." : "Copying...", base);
+  log_line("paste %s %s -> %s", g_clip_op == CLIP_CUT ? "cut" : "copy", g_clip_path, dst);
+  FRESULT fr = (g_clip_op == CLIP_CUT) ? fsop_rename(g_clip_path, dst)   /* same-volume move */
+                                       : fsop_copy(g_clip_path, dst);
+  log_line("paste -> %d (%s)", fr, fr_str(fr));
+
+  if (fr != FR_OK) {
+    if (had_existing) {                             /* roll back: drop partial, restore original */
+      FILINFO tmp;
+      if (f_stat(dst, &tmp) == FR_OK) fsop_delete(dst);
+      fsop_rename(bak, dst);
+    }
+    log_flush_to_sd(LOG_PATH);
+    msg_screen("Paste failed", UI_WARN, fr_str(fr));
+    return false;
+  }
+
+  if (had_existing) fsop_delete(bak);               /* new is in place -> discard the old copy */
+  log_flush_to_sd(LOG_PATH);
+  if (g_clip_op == CLIP_CUT) { g_clip_op = CLIP_NONE; g_clip_path[0] = 0; }  /* source consumed */
+  return true;
+}
+
 static bool do_chmod_toggle(const FsEntry* e, u8 mask) {
   char np[PATH_MAX];
   if (!path_join(g_cwd, e->name, np)) return false;
@@ -403,15 +492,22 @@ static bool do_chmod_toggle(const FsEntry* e, u8 mask) {
  * rescanned (a mutation succeeded). Write actions appear only on EZ-Flash
  * Omega; on EverDrive the tool stays read-only. `e` is NULL on the [..] row. */
 static bool actions_menu(const FsEntry* e) {
-  enum { A_INFO, A_RENAME, A_RDO, A_HID, A_DELETE, A_MKDIR };
-  int  ids[7];
-  char labels[7][32];
+  enum { A_INFO, A_RENAME, A_COPY, A_CUT, A_PASTE, A_RDO, A_HID, A_DELETE, A_MKDIR };
+  int  ids[10];
+  char labels[10][32];
   int  ni = 0;
 
   if (e) { ids[ni] = A_INFO; strcpy(labels[ni++], "Info / properties"); }
   if (can_write()) {
     if (e) {
       ids[ni] = A_RENAME; strcpy(labels[ni++], "Rename");
+      ids[ni] = A_COPY;   strcpy(labels[ni++], "Copy");
+      ids[ni] = A_CUT;    strcpy(labels[ni++], "Cut");
+    }
+    if (g_clip_op != CLIP_NONE) {
+      ids[ni] = A_PASTE; siprintf(labels[ni++], "Paste %s here", g_clip_op == CLIP_CUT ? "(move)" : "(copy)");
+    }
+    if (e) {
       ids[ni] = A_RDO; siprintf(labels[ni++], "Read-only: %s", (e->attrib & AM_RDO) ? "ON" : "off");
       ids[ni] = A_HID; siprintf(labels[ni++], "Hidden: %s",    (e->attrib & AM_HID) ? "ON" : "off");
       ids[ni] = A_DELETE; strcpy(labels[ni++], e->is_dir ? "Delete folder" : "Delete file");
@@ -449,6 +545,9 @@ static bool actions_menu(const FsEntry* e) {
       switch (ids[sel]) {
         case A_INFO:   properties_screen(e);                 break;
         case A_RENAME: if (do_rename(e))               return true; break;
+        case A_COPY:   do_copy(e);                     return false;  /* set clipboard, show indicator */
+        case A_CUT:    do_cut(e);                      return false;
+        case A_PASTE:  if (do_paste())                 return true; break;
         case A_RDO:    if (do_chmod_toggle(e, AM_RDO)) return true; break;
         case A_HID:    if (do_chmod_toggle(e, AM_HID)) return true; break;
         case A_DELETE: if (do_delete(e))               return true; break;
