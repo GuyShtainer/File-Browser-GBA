@@ -293,19 +293,19 @@ static void render_browser(int sel, int top) {
   ui_text(2, STATUS_Y, UI_OK, stt);
 
   if (g_selmode) {
-    ui_text(2, FOOT_Y, UI_OK, "SE mark ST all A batch B exit");
+    ui_text(2, FOOT_Y, UI_OK, "A mark ST all SE batch B exit");
   } else if (g_clip_op != CLIP_NONE) {
     char fb[128], ft[128];
     if (g_clip_count == 1) {
-      char nbf[64]; ui_truncate(nbf, g_clip_buf, 14);
-      siprintf(fb, "[%s] %s  A:paste", g_clip_op == CLIP_CUT ? "CUT" : "COPY", nbf);
+      char nbf[64]; ui_truncate(nbf, g_clip_buf, 12);
+      siprintf(fb, "[%s] %s  paste in menu", g_clip_op == CLIP_CUT ? "CUT" : "COPY", nbf);
     } else {
-      siprintf(fb, "[%s] %d items  A:paste", g_clip_op == CLIP_CUT ? "CUT" : "COPY", g_clip_count);
+      siprintf(fb, "[%s] %d items  paste in menu", g_clip_op == CLIP_CUT ? "CUT" : "COPY", g_clip_count);
     }
     ui_truncate(ft, fb, 29);
     ui_text(2, FOOT_Y, UI_WARN, ft);
   } else {
-    ui_text(2, FOOT_Y, UI_DIM, "SE open B up A menu ST:sort");
+    ui_text(2, FOOT_Y, UI_DIM, "A open B up SE view ST:sort");
   }
 }
 
@@ -855,17 +855,17 @@ static void run_browser(void) {
     else if (hit & KEY_L)     { sel -= LIST_ROWS; if (sel < 0) sel = 0; }                /* page up   */
     else if (hit & KEY_R)     { sel += LIST_ROWS; if (sel >= rows) sel = rows ? rows - 1 : 0; } /* page down */
     else if (g_selmode) {
-      /* selection mode: SELECT marks the highlighted entry, START marks all/none,
-       * A opens batch actions, B leaves selection mode. */
-      if (hit & KEY_SELECT) {
+      /* selection mode: A marks the highlighted entry, START marks all/none,
+       * SELECT opens batch actions, B leaves selection mode. */
+      if (hit & KEY_A) {
         FsEntry* e = br_entry(sel);
         if (e) { int idx = (int)(e - g_entries); g_marked[idx] = !g_marked[idx]; }
       } else if (hit & KEY_START) {
         bool none = (marked_count() == 0);
         for (int i = 0; i < g_n; i++) g_marked[i] = none;   /* none -> all, else clear */
-      } else if (hit & KEY_A) {
+      } else if (hit & KEY_SELECT) {
         int mc = marked_count();
-        if (mc == 0) msg_screen("No items marked", UI_DIM, "SELECT marks the highlighted item");
+        if (mc == 0) msg_screen("No items marked", UI_DIM, "A marks the highlighted item");
         else if (batch_menu(mc)) { rescan(); sel = 0; top = 0; }
       } else if (hit & KEY_B) {
         g_selmode = false;
@@ -881,18 +881,25 @@ static void run_browser(void) {
       sel = 0; top = 0;
     }
     else if (hit & KEY_A) {
-      if (actions_menu(br_entry(sel))) { rescan(); }   /* menu may mutate the dir */
-    }
-    else if (hit & KEY_B) {
-      if (!at_root()) { path_up(); rescan(); sel = 0; top = 0; }
-    }
-    else if (hit & KEY_SELECT) {                        /* open folder / view file */
+      /* A: enter a folder, go up on [..], or open the actions menu on a file */
       FsEntry* e = br_entry(sel);
       if (!e) {                                   /* [..] up-entry */
         if (!at_root()) { path_up(); rescan(); sel = 0; top = 0; }
       } else if (e->is_dir) {
         char np[PATH_MAX];
         if (path_join(g_cwd, e->name, np)) { strcpy(g_cwd, np); rescan(); sel = 0; top = 0; }
+      } else {
+        if (actions_menu(e)) { rescan(); }        /* file -> actions menu */
+      }
+    }
+    else if (hit & KEY_B) {
+      if (!at_root()) { path_up(); rescan(); sel = 0; top = 0; }
+    }
+    else if (hit & KEY_SELECT) {
+      /* SELECT: view a file, or open the actions menu on a folder / [..] */
+      FsEntry* e = br_entry(sel);
+      if (!e || e->is_dir) {
+        if (actions_menu(e)) { rescan(); }
       } else {
         char np[PATH_MAX];
         if (path_join(g_cwd, e->name, np)) file_viewer(np, e->name, e->size);
