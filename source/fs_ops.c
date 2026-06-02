@@ -1,0 +1,189 @@
+#include "fs_ops.h"
+#include <string.h>
+
+/* ASCII case-insensitive compare (locale-free, host-portable). */
+static int name_ci(const char* a, const char* b) {
+  for (;;) {
+    unsigned char x = (unsigned char)*a++, y = (unsigned char)*b++;
+    if (x >= 'a' && x <= 'z') x = (unsigned char)(x - 32);
+    if (y >= 'a' && y <= 'z') y = (unsigned char)(y - 32);
+    if (x != y) return (int)x - (int)y;
+    if (!x) return 0;
+  }
+}
+
+int fsop_list(const char* dir, FsEntry* out, int max, bool* truncated) {
+  if (truncated) *truncated = false;
+  if (max <= 0) return 0;
+
+  DIR d;
+  FILINFO fno;
+  if (f_opendir(&d, dir) != FR_OK) return -1;
+
+  int n = 0;
+  /* End of directory is signalled by an empty fname[0] WITHOUT an error; a
+   * non-FR_OK return is a real I/O error (EZ-Flash reads do not retry), which
+   * must NOT be mistaken for a short/clean listing — capture fr to tell them
+   * apart. */
+  FRESULT fr;
+  while ((fr = f_readdir(&d, &fno)) == FR_OK && fno.fname[0]) {
+    if (n >= max) { if (truncated) *truncated = true; break; }
+
+    FsEntry* e = &out[n];
+    int i = 0;
+    for (; i < FS_NAME_CAP - 1 && fno.fname[i]; i++) e->name[i] = fno.fname[i];
+    e->name[i] = 0;
+
+    e->is_dir = (fno.fattrib & AM_DIR) != 0;
+    e->attrib = fno.fattrib;
+    e->size   = e->is_dir ? 0u : (uint64_t)fno.fsize;
+    e->dosdt  = ((uint32_t)fno.fdate << 16) | (uint32_t)fno.ftime;
+    n++;
+  }
+  f_closedir(&d);
+  /* fr is FR_OK both at clean EOD and after the n>=max break (last readdir
+   * succeeded); only a genuine error makes it non-OK. */
+  if (fr != FR_OK) return -1;
+  return n;
+}
+
+/* <0 if x should sort before y, >0 after, 0 equal. */
+static int entry_cmp(const FsEntry* x, const FsEntry* y, FsSortKey key,
+                     bool reverse) {
+  /* Directories always come first — this grouping is NOT reversible. */
+  if (x->is_dir != y->is_dir) return x->is_dir ? -1 : 1;
+
+  int c = 0;
+  switch (key) {
+    case FS_SORT_SIZE:
+      c = (x->size < y->size) ? -1 : (x->size > y->size) ? 1 : 0;
+      break;
+    case FS_SORT_DATE:
+      c = (x->dosdt < y->dosdt) ? -1 : (x->dosdt > y->dosdt) ? 1 : 0;
+      break;
+    case FS_SORT_NAME:
+    default:
+      c = name_ci(x->name, y->name);
+      break;
+  }
+  if (c == 0) c = name_ci(x->name, y->name);  /* stable-ish tiebreak by name */
+  return reverse ? -c : c;
+}
+
+void fsop_sort(FsEntry* a, int n, FsSortKey key, bool reverse) {
+  /* Insertion sort: n is bounded (a directory listing) and this runs once per
+   * scan / sort-toggle, never inside an SD transfer. */
+  for (int i = 1; i < n; i++) {
+    FsEntry tmp = a[i];
+    int j = i - 1;
+    while (j >= 0 && entry_cmp(&a[j], &tmp, key, reverse) > 0) {
+      a[j + 1] = a[j];
+      j--;
+    }
+    a[j + 1] = tmp;
+  }
+}
+
+FRESULT fsop_freespace(const char* path, uint64_t* free_bytes,
+                       uint64_t* total_bytes) {
+  DWORD nclst = 0;
+  FATFS* fs = 0;
+  FRESULT fr = f_getfree(path, &nclst, &fs);
+  if (fr != FR_OK) return fr;
+
+  /* Sector size is fixed at 512 here (FF_MIN_SS == FF_MAX_SS == 512), so the
+   * SS() macro is a constant and FATFS carries no ssize field. */
+  uint64_t cluster_bytes = (uint64_t)fs->csize * 512u;
+  if (free_bytes)  *free_bytes  = (uint64_t)nclst * cluster_bytes;
+  if (total_bytes) *total_bytes = (uint64_t)(fs->n_fatent - 2) * cluster_bytes;
+  return FR_OK;
+}
+
+/* ---- mutating ops ------------------------------------------------------- */
+
+FRESULT fsop_mkdir(const char* path) { return f_mkdir(path); }
+
+FRESULT fsop_rename(const char* oldpath, const char* newpath) {
+  return f_rename(oldpath, newpath);
+}
+
+FRESULT fsop_chmod(const char* path, uint8_t set, uint8_t mask) {
+  return f_chmod(path, (BYTE)set, (BYTE)mask);
+}
+
+/* Explicit-stack directory tree removal. One open DIR per nesting level lives
+ * in the fixed static stack below (in .bss, ~2 KiB), so depth is bounded and
+ * the IWRAM stack frame stays tiny — we never use C recursion. FatFs f_readdir
+ * never yields "." or "..", so the walk can never escape the target subtree. */
+static DIR     s_ds[FS_RMTREE_MAX_DEPTH];
+static int     s_plen[FS_RMTREE_MAX_DEPTH];
+static char    s_path[FS_PATH_CAP];
+static FILINFO s_fno;
+
+static FRESULT rmtree(const char* root) {
+  int n = 0;
+  for (; root[n] && n < FS_PATH_CAP - 1; n++) s_path[n] = root[n];
+  s_path[n] = 0;
+  if (n == 0 || (n == 1 && s_path[0] == '/')) return FR_INVALID_NAME;  /* never the root */
+
+  int depth = 0;
+  FRESULT fr = f_opendir(&s_ds[0], s_path);
+  if (fr != FR_OK) return fr;
+  s_plen[0] = n;
+
+  while (depth >= 0) {
+    fr = f_readdir(&s_ds[depth], &s_fno);
+    if (fr != FR_OK) break;
+
+    if (s_fno.fname[0] == 0) {              /* level exhausted: remove this dir */
+      f_closedir(&s_ds[depth]);
+      s_path[s_plen[depth]] = 0;            /* s_path == this directory's path  */
+      fr = f_unlink(s_path);
+      if (fr == FR_DENIED) { f_chmod(s_path, 0, AM_RDO); fr = f_unlink(s_path); }
+      depth--;
+      if (fr != FR_OK) break;
+      if (depth >= 0) s_path[s_plen[depth]] = 0;  /* restore parent path */
+      continue;
+    }
+
+    int pl = s_plen[depth];
+    int nl = (int)strlen(s_fno.fname);
+    if (pl + 1 + nl + 1 > FS_PATH_CAP) { fr = FR_NOT_ENOUGH_CORE; break; }
+    if (pl == 1 && s_path[0] == '/') {      /* parent is the root: "/name" */
+      for (int i = 0; i < nl; i++) s_path[1 + i] = s_fno.fname[i];
+      s_path[1 + nl] = 0;
+    } else {
+      s_path[pl] = '/';
+      for (int i = 0; i < nl; i++) s_path[pl + 1 + i] = s_fno.fname[i];
+      s_path[pl + 1 + nl] = 0;
+    }
+    int childlen = (int)strlen(s_path);
+
+    if (s_fno.fattrib & AM_DIR) {           /* descend */
+      if (depth + 1 >= FS_RMTREE_MAX_DEPTH) { fr = FR_NOT_ENOUGH_CORE; break; }
+      fr = f_opendir(&s_ds[depth + 1], s_path);
+      if (fr != FR_OK) break;
+      depth++;
+      s_plen[depth] = childlen;
+    } else {                                /* delete a file */
+      if (s_fno.fattrib & AM_RDO) f_chmod(s_path, 0, AM_RDO);
+      fr = f_unlink(s_path);
+      if (fr != FR_OK) break;
+      s_path[pl] = 0;                       /* restore parent path for next readdir */
+    }
+  }
+
+  if (fr != FR_OK) {                        /* close any DIRs still open */
+    for (int i = 0; i <= depth && i < FS_RMTREE_MAX_DEPTH; i++) f_closedir(&s_ds[i]);
+  }
+  return fr;
+}
+
+FRESULT fsop_delete(const char* path) {
+  FILINFO fno;
+  FRESULT fr = f_stat(path, &fno);
+  if (fr != FR_OK) return fr;
+  if (fno.fattrib & AM_DIR) return rmtree(path);
+  if (fno.fattrib & AM_RDO) f_chmod(path, 0, AM_RDO);   /* clear RO so unlink works */
+  return f_unlink(path);
+}
