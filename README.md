@@ -36,8 +36,22 @@ read-only):
   overwrite; pasting a folder into its own subtree is refused. A footer
   indicator shows what's on the clipboard (`[COPY]`/`[CUT]`).
 
-Next: multi-select + batch operations — see the ROADMAP. Every write is confirmed
-and logged to `sdbrowse_log.txt`.
+- **Multi-select + batch** — from the actions menu, "Select multiple" enters a
+  selection mode: **A** marks/unmarks the highlighted entry (shown with a `*`),
+  **START** marks all / clears all, the status bar shows the marked count + total
+  size, and **SELECT** opens a batch menu to **Copy / Cut / Delete** all marked
+  items at once. **B** leaves selection mode. (Copy/Cut feed the same clipboard,
+  so you then navigate and Paste.)
+
+This completes the core file-manager feature set. Every write is confirmed and
+logged to `sdbrowse_log.txt`.
+
+### On-screen keyboard — editing mid-text
+
+The keyboard has a **movable caret**: **L / R** move it through the text (the
+editable cell is shown as a white box with black text), so you can fix a mistake
+in the middle without deleting everything. **A** inserts at the caret, **B**
+backspaces before it.
 
 ## Controls
 
@@ -49,15 +63,25 @@ and logged to `sdbrowse_log.txt`.
 | A | Open folder · (on a file) open the Hex/Text viewer |
 | B | Up one folder |
 | START | Cycle sort: Name → Size → Date, each `^` ascending / `v` descending (6 states) |
-| SELECT | Open the **actions menu** (Info, and on Omega: rename / copy / cut / paste here / attributes / delete / new folder) |
+| SELECT | Open the **actions menu** (Info, and on Omega: rename / copy / cut / paste here / attributes / delete / new folder / select multiple) |
+
+### Selection mode (from "Select multiple")
+
+| Key | Action |
+|-----|--------|
+| A | Mark / unmark the highlighted entry (`*`) |
+| START | Mark all / clear all |
+| SELECT | Batch menu: Copy / Cut / Delete the marked items |
+| B | Leave selection mode |
 
 ### On-screen keyboard (QWERTY)
 
 | Key | Action |
 |-----|--------|
 | d-pad | Move the character cursor (rows: numbers, qwerty, lower, upper, symbols + space) |
-| A | Type the highlighted character |
-| B | Backspace |
+| L / R | Move the text caret left / right (edit mid-text; caret shown as a white box) |
+| A | Insert the highlighted character at the caret |
+| B | Backspace (delete before the caret) |
 | START | Confirm |
 | SELECT | Cancel |
 
