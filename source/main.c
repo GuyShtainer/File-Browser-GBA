@@ -647,14 +647,44 @@ static bool actions_menu(const FsEntry* e) {
 #define TXT_BPR   28
 static u8 EWRAM_BSS g_viewbuf[VIEW_ROWS * TXT_BPR];   /* 420 B page window */
 
+/* Hex-editor state: pending edits are kept as a sparse overlay (offset -> new
+ * byte) on top of the on-disk window, and written out together via the verified
+ * fsop_apply_edits. The file itself is untouched until the user saves. */
+#define HEX_EDIT_MAX 512
+static HexEdit  EWRAM_BSS g_edits[HEX_EDIT_MAX];
+static int                g_nedits = 0;
+static bool               g_editing = false;   /* hex EDIT mode active   */
+static uint32_t           g_ecur = 0;          /* edit cursor: abs offset */
+
+static int edit_find(uint32_t off) {
+  for (int i = 0; i < g_nedits; i++) if (g_edits[i].off == off) return i;
+  return -1;
+}
+static uint8_t edit_get(uint32_t off, uint8_t base) {
+  int i = edit_find(off);
+  return (i >= 0) ? g_edits[i].val : base;
+}
+/* Returns false only when a NEW edit can't be stored (buffer full) so the
+ * caller can warn — a silently dropped edit must never reach a save. */
+static bool edit_set(uint32_t off, uint8_t val, uint8_t base) {
+  int i = edit_find(off);
+  if (val == base) {                           /* reverted to original -> drop edit */
+    if (i >= 0) g_edits[i] = g_edits[--g_nedits];
+    return true;
+  }
+  if (i >= 0) { g_edits[i].val = val; return true; }
+  if (g_nedits < HEX_EDIT_MAX) { g_edits[g_nedits].off = off; g_edits[g_nedits].val = val; g_nedits++; return true; }
+  return false;                                /* HEX_EDIT_MAX reached */
+}
+
 static void render_view(const char* name, uint64_t size, uint64_t off,
                         const uint8_t* buf, uint32_t got, bool hex) {
   ui_clear();
   char line[80], nb[64], hbuf[96];
-  ui_truncate(nb, name, 22);
-  siprintf(hbuf, "%s [%s]", nb, hex ? "HEX" : "TXT");
+  ui_truncate(nb, name, 20);
+  siprintf(hbuf, "%s [%s]", nb, g_editing ? "EDIT" : hex ? "HEX" : "TXT");
   ui_truncate(line, hbuf, 29);
-  ui_text(2, HDR_Y, UI_TITLE, line);
+  ui_text(2, HDR_Y, g_editing ? UI_WARN : UI_TITLE, line);
 
   int bpr = hex ? HEX_BPR : TXT_BPR;
   if (got == 0) {
@@ -665,15 +695,21 @@ static void render_view(const char* name, uint64_t size, uint64_t off,
       if (ro >= got) break;
       int y = 10 + r * 8;
       if (hex) {
-        char* p = line;
-        p += siprintf(p, "%05lX:", (unsigned long)(off + ro));
-        for (int i = 0; i < HEX_BPR; i++) {
-          if ((i & 1) == 0) *p++ = ' ';
-          if (ro + (uint32_t)i < got) p += siprintf(p, "%02X", buf[ro + i]);
-          else { *p++ = ' '; *p++ = ' '; }
+        char ofs[12];
+        siprintf(ofs, "%05lX:", (unsigned long)(off + ro));
+        ui_text(2, y, UI_DIM, ofs);                       /* offset label */
+        for (int i = 0; i < HEX_BPR && ro + (uint32_t)i < got; i++) {
+          uint32_t a = (uint32_t)(off + ro + i);
+          uint8_t  b = edit_get(a, buf[ro + i]);
+          char hh[3]; siprintf(hh, "%02X", b);
+          int bx = 50 + i * 23;
+          if (g_editing && a == g_ecur) {                 /* the editable byte: white box */
+            m3_rect(bx, y, bx + 16, y + UI_ROW_H, RGB15(31, 31, 31));
+            ui_text(bx, y, RGB15(0, 0, 0), hh);
+          } else {
+            ui_text(bx, y, edit_find(a) >= 0 ? UI_WARN : UI_SAVECLR, hh);
+          }
         }
-        *p = 0;
-        ui_text(2, y, UI_SAVECLR, line);
       } else {
         char t[TXT_BPR + 1];
         int c = 0;
@@ -688,11 +724,20 @@ static void render_view(const char* name, uint64_t size, uint64_t off,
   }
 
   char st[48], stt[48];
-  unsigned long pct = size ? (unsigned long)((off * 100) / size) : 100;
-  siprintf(st, "off %lu/%lu  %lu%%", (unsigned long)off, (unsigned long)size, pct);
-  ui_truncate(stt, st, 29);
-  ui_text(2, STATUS_Y, UI_OK, stt);
-  ui_text(2, FOOT_Y, UI_DIM, "A hex/txt  L/R page  B back");
+  if (g_editing) {
+    uint8_t cur = edit_get(g_ecur, (g_ecur >= off && g_ecur < off + got) ? buf[g_ecur - off] : 0);
+    siprintf(st, "EDIT @%lX = %02X  %d edit%s", (unsigned long)g_ecur, cur,
+             g_nedits, g_nedits == 1 ? "" : "s");
+    ui_truncate(stt, st, 29);
+    ui_text(2, STATUS_Y, UI_WARN, stt);
+    ui_text(2, FOOT_Y, UI_DIM, "L/R val  ST save  SE undo  B exit");
+  } else {
+    unsigned long pct = size ? (unsigned long)((off * 100) / size) : 100;
+    siprintf(st, "off %lu/%lu  %lu%%", (unsigned long)off, (unsigned long)size, pct);
+    ui_truncate(stt, st, 29);
+    ui_text(2, STATUS_Y, UI_OK, stt);
+    ui_text(2, FOOT_Y, UI_DIM, "A hex/txt  L/R page  ST edit  B back");
+  }
 }
 
 /* Page-windowed viewer: keeps a byte offset and re-reads one screen worth of
@@ -708,14 +753,25 @@ static void file_viewer(const char* path, const char* name, uint64_t size) {
     return;
   }
 
-  bool hex = true;        /* default to hex — robust for any file type */
+  /* Let the d-pad + shoulders auto-repeat while in the viewer (paging and, in
+   * edit mode, cursor/value changes); restored to the browser's mask on exit. */
+  key_repeat_mask(KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT | KEY_L | KEY_R);
+
+  bool hex = true, quit = false, fopen = true;
   uint64_t off = 0;
   uint32_t got = 0;
   bool dirty = true;
+  g_editing = false; g_nedits = 0; g_ecur = 0;
 
-  while (1) {
+  while (!quit) {
     int bpr = hex ? HEX_BPR : TXT_BPR;
     uint32_t page = (uint32_t)(VIEW_ROWS * bpr);
+
+    if (g_editing) {                         /* scroll window to keep the cursor visible */
+      uint32_t crow = (g_ecur / HEX_BPR) * HEX_BPR;
+      if ((uint64_t)g_ecur < off) off = crow;
+      else if ((uint64_t)g_ecur >= off + page) off = crow - (uint32_t)((VIEW_ROWS - 1) * HEX_BPR);
+    }
     if (size == 0) off = 0;
     else { uint64_t mo = ((size - 1) / bpr) * bpr; if (off > mo) off = mo; }
 
@@ -728,20 +784,79 @@ static void file_viewer(const char* path, const char* name, uint64_t size) {
     }
 
     vsync();
-    u16 mv  = key_repeat(KEY_UP | KEY_DOWN);
-    u16 hit = key_hit(KEY_A | KEY_B | KEY_L | KEY_R | KEY_LEFT | KEY_RIGHT);
+    u16 mv  = key_repeat(KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT | KEY_L | KEY_R);
+    u16 hit = key_hit(KEY_A | KEY_B | KEY_START | KEY_SELECT);
     if (!mv && !hit) continue;
     dirty = true;
 
-    if (hit & KEY_B)          { f_close(&f); return; }
-    else if (hit & KEY_A)     { hex = !hex; }                 /* toggle mode */
-    else if (mv & KEY_DOWN)   { off += (uint32_t)bpr; }       /* clamped at top */
-    else if (mv & KEY_UP)     { off = (off >= (uint32_t)bpr) ? off - (uint32_t)bpr : 0; }
-    else if (hit & KEY_R)     { off += page; }
-    else if (hit & KEY_L)     { off = (off >= page) ? off - page : 0; }
-    else if (hit & KEY_LEFT)  { off = 0; }
-    else if (hit & KEY_RIGHT) { off = (size > 0) ? (size - 1) : 0; }  /* clamp -> last page */
+    if (!g_editing) {
+      if (hit & KEY_B)          { quit = true; }
+      else if (hit & KEY_A)     { hex = !hex; }                /* toggle hex/text */
+      else if (mv & KEY_DOWN)   { off += (uint32_t)bpr; }
+      else if (mv & KEY_UP)     { off = (off >= (uint32_t)bpr) ? off - (uint32_t)bpr : 0; }
+      else if (mv & KEY_R)      { off += page; }
+      else if (mv & KEY_L)      { off = (off >= page) ? off - page : 0; }
+      else if (mv & KEY_LEFT)   { off = 0; }
+      else if (mv & KEY_RIGHT)  { off = (size > 0) ? (size - 1) : 0; }
+      else if (hit & KEY_START) {                              /* enter EDIT mode */
+        if (!can_write()) msg_screen("Read-only", UI_WARN, "Editing needs EZ-Flash Omega");
+        else if (size == 0) msg_screen("Empty file", UI_DIM, "Nothing to edit");
+        else {
+          hex = true;
+          off = (off / HEX_BPR) * HEX_BPR;
+          g_editing = true; g_nedits = 0;
+          g_ecur = (uint32_t)((off < size) ? off : 0);
+        }
+      }
+    } else {
+      /* EDIT mode (hex): d-pad moves the byte cursor, L/R change its value. */
+      uint32_t maxb = (size - 1 > 0xFFFFFFFEull) ? 0xFFFFFFFEu : (uint32_t)(size - 1);
+      if (g_ecur > maxb) g_ecur = maxb;
+      if (mv & KEY_LEFT)        { if (g_ecur > 0) g_ecur--; }
+      else if (mv & KEY_RIGHT)  { if (g_ecur < maxb) g_ecur++; }
+      else if (mv & KEY_UP)     { if (g_ecur >= HEX_BPR) g_ecur -= HEX_BPR; }
+      else if (mv & KEY_DOWN)   { if (g_ecur + HEX_BPR <= maxb) g_ecur += HEX_BPR; }
+      else if (mv & (KEY_L | KEY_R)) {                         /* change the cursor byte */
+        if (g_ecur >= off && g_ecur < off + got) {
+          uint8_t base = g_viewbuf[g_ecur - off];
+          uint8_t cur  = edit_get(g_ecur, base);
+          if (!edit_set(g_ecur, (mv & KEY_R) ? (uint8_t)(cur + 1) : (uint8_t)(cur - 1), base))
+            msg_screen("Edit buffer full", UI_WARN, "Save or undo first");
+        }
+      }
+      else if (hit & KEY_SELECT) { g_nedits = 0; }             /* undo all pending edits */
+      else if (hit & KEY_START) {                              /* SAVE (verified, backed up) */
+        if (g_nedits == 0) { g_editing = false; }
+        else if (confirm("Save edits to file?", "Original kept as .bak~")) {
+          show_msg("Saving...", name);
+          f_close(&f); fopen = false;
+          FRESULT fr = fsop_apply_edits(path, g_edits, g_nedits);
+          log_line("hexedit %s (%d edits) -> %d (%s)", path, g_nedits, fr, fr_str(fr));
+          log_flush_to_sd(LOG_PATH);
+          if (fr == FR_OK) {
+            g_nedits = 0; g_editing = false;
+            msg_screen("Saved", UI_OK, "Original kept as .bak~");
+          } else {
+            FILINFO chk;                        /* rare: original gone -> point at recovery files */
+            if (f_stat(path, &chk) != FR_OK)
+              msg_screen("Save failed - RECOVER", UI_WARN, "see name.bak~ and name.hexnew~");
+            else
+              msg_screen("Save failed", UI_WARN, fr_str(fr));
+          }
+          if (f_open(&f, path, FA_READ) == FR_OK) fopen = true; else quit = true;  /* reopen saved file */
+        }
+      }
+      else if (hit & KEY_B) {                                  /* leave EDIT mode */
+        if (g_nedits == 0 || confirm("Discard edits?", "Unsaved changes lost")) {
+          g_editing = false; g_nedits = 0;
+        }
+      }
+    }
   }
+
+  if (fopen) f_close(&f);
+  g_editing = false; g_nedits = 0;
+  key_repeat_mask(KEY_UP | KEY_DOWN);        /* restore the browser's repeat mask */
 }
 
 /* ---- main loop ---------------------------------------------------------- */
