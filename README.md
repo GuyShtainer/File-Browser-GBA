@@ -18,8 +18,8 @@ family described in [`../../docs/ROADMAP.md`](../../docs/ROADMAP.md) (Project A)
   handles files larger than RAM) via SELECT on a file
 
 **Phase 1 (write — EZ-Flash Omega only)** — validated on real hardware. Reached via the
-**A** actions menu (write items appear only on the Omega; the EverDrive stays
-read-only):
+actions menu (press **A** on a file, or **SELECT** on a folder; write items appear
+only on the Omega; the EverDrive stays read-only):
 
 - An **on-screen keyboard** (QWERTY d-pad grid, both cases shown) for typed names,
   with FAT-name validation
@@ -37,9 +37,9 @@ read-only):
   indicator shows what's on the clipboard (`[COPY]`/`[CUT]`).
 
 - **Multi-select + batch** — from the actions menu, "Select multiple" enters a
-  selection mode: **SELECT** marks/unmarks the highlighted entry (shown with a `*`),
+  selection mode: **A** marks/unmarks the highlighted entry (shown with a `*`),
   **START** marks all / clears all, the status bar shows the marked count + total
-  size, and **A** opens a batch menu to **Copy / Cut / Delete** all marked
+  size, and **SELECT** opens a batch menu to **Copy / Cut / Delete** all marked
   items at once. **B** leaves selection mode. (Copy/Cut feed the same clipboard,
   so you then navigate and Paste.)
 
@@ -60,18 +60,18 @@ backspaces before it.
 | UP / DOWN | Move cursor (hold to repeat) |
 | LEFT / RIGHT | Jump 11 rows up / down |
 | L / R | Page up / page down (one screen) |
-| SELECT | Open folder · (on a file) open the Hex/Text viewer |
+| A | **Folder:** open it · **File:** open the **actions menu** (Info, and on Omega: rename / copy / cut / paste here / attributes / delete / new folder / select multiple) |
+| SELECT | **File:** open the Hex/Text viewer · **Folder / `[..]`:** open the actions menu |
 | B | Up one folder |
 | START | Cycle the sort: 6 states across Name / Size / Date, each ascending and descending. The status bar spells out the active one — "Name A-Z", "Name Z-A", "Size small-big", "Size big-small", "Date old-new", "Date new-old". Folders always sort before files. |
-| A | Open the **actions menu** (Info, and on Omega: rename / copy / cut / paste here / attributes / delete / new folder / select multiple) |
 
 ### Selection mode (from "Select multiple")
 
 | Key | Action |
 |-----|--------|
-| SELECT | Mark / unmark the highlighted entry (`*`) |
+| A | Mark / unmark the highlighted entry (`*`) |
 | START | Mark all / clear all |
-| A | Batch menu: Copy / Cut / Delete the marked items |
+| SELECT | Batch menu: Copy / Cut / Delete the marked items |
 | B | Leave selection mode |
 
 ### On-screen keyboard (QWERTY)
