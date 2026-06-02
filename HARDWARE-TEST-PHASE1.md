@@ -78,3 +78,38 @@ card uncorrupted (no-retry path handled).  9. `/sdbrowse_log.txt` written + read
   **unproven claim** until run there.
 - **Delete bypasses the verified-write/backup pipeline by design** (no `.tmp` for `f_unlink`);
   the card backup is the sole undo — state this in the delete feature's user-facing warning.
+
+---
+
+# Phase 3 — hex editor (highest risk: edits arbitrary bytes of any file)
+
+Save is a verified rewrite: write `<name>.hexnew~` = original-with-edits, **byte-verify**
+it, back the original up to `<name>.bak~`, then atomically rename the temp into place
+(file size preserved; no insert/append). Reviewed safe-to-commit, but the SD write path is
+real/no-retry and unemulated, so it needs sign-off on a real Omega DE.
+
+- [ ] **Back up the SD first.** Pick a **throwaway file** (note its full byte content on a PC).
+- [ ] **Enter EDIT:** open it (SELECT) → hex → START. Confirm a **white-box cursor** appears
+      and the `[EDIT]` header shows; on EverDrive confirm START says "read-only" (no edit).
+- [ ] **Edit a byte:** move the cursor, L/R change the value (edited byte highlights). Save
+      (START → confirm). Then on a PC: the **one byte changed to the new value**, **every
+      other byte is identical**, the **file size is unchanged**, and **`<name>.bak~` holds the
+      exact pre-edit original**.
+- [ ] **Multiple + scattered edits** (incl. first byte, last byte, across page boundaries):
+      all land; unedited bytes intact.
+- [ ] **Undo (SELECT)** clears pending edits; **B with unsaved edits** prompts discard.
+- [ ] **Edit-buffer cap:** make >512 distinct-byte edits → "Edit buffer full" appears (no
+      silent drop); after saving/undo you can edit again.
+- [ ] **Induced failure — near-full card:** edit a large-ish file with little free space so the
+      temp write fails; confirm **"Save failed"**, the **original is intact** (verify on PC),
+      and the card stays mountable. (Optional, harder: force the final rename to fail and
+      confirm the "RECOVER … name.bak~ / name.hexnew~" message + that the bytes exist there.)
+- [ ] **Re-save** the same file twice; confirm the prior `.bak~` is replaced (single-slot) and
+      no stray `.hexnew~` remains after a successful save.
+- [ ] **`/sdbrowse_log.txt`** shows the `hexedit … -> 0 (OK)` line.
+
+**Emulator cannot prove:** the whole edit→verify→backup→swap write path (no-retry EZ-Flash
+writes + renames). **Blocking "done" items:** (1) edited byte correct + rest intact + size
+preserved + `.bak~` = original, on real hardware; (2) a forced **verify-fail / disk-full**
+leaves the original intact and the card mountable; (3) the **rename-fail recovery** path
+(original recoverable from `.bak~`/`.hexnew~`); (4) EverDrive cannot enter EDIT mode.

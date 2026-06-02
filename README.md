@@ -46,6 +46,15 @@ only on the Omega; the EverDrive stays read-only):
 This completes the core file-manager feature set. Every write is confirmed and
 logged to `sdbrowse_log.txt`.
 
+**Phase 3 (in progress, Omega-only)** — an in-place **hex editor**. From the hex
+viewer, **START** enters EDIT mode: a white-box cursor marks the editable byte,
+**L/R** change its value, edited bytes show highlighted. **START** saves,
+**SELECT** undoes pending edits, **B** exits. Saving is deliberately *not* an
+in-place poke: it writes a temp copy with the edits applied, **byte-verifies** it
+against original-with-edits, backs the original up to `<name>.bak~`, then
+atomically renames the temp into place — so a failed write never corrupts the
+file. File size is preserved (no insert/append). Pending **hardware sign-off**.
+
 ### On-screen keyboard — editing mid-text
 
 The keyboard has a **movable caret**: **L / R** move it through the text (the
@@ -93,7 +102,18 @@ backspaces before it.
 | UP / DOWN | Scroll one row |
 | L / R | Page up / page down |
 | LEFT / RIGHT | Jump to start / end of file |
+| START | (hex, Omega) enter EDIT mode |
 | B | Back to the browser |
+
+### Hex editor (EDIT mode)
+
+| Key | Action |
+|-----|--------|
+| d-pad | Move the byte cursor (white box); auto-scrolls |
+| L / R | Decrease / increase the cursor byte (hold to repeat) |
+| START | Save (confirm; original kept as `<name>.bak~`) |
+| SELECT | Undo all pending edits |
+| B | Leave EDIT mode (prompts if there are unsaved edits) |
 
 ## Build
 
