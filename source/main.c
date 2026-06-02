@@ -204,6 +204,17 @@ static void rescan(void) {
 
 /* ---- rendering ---------------------------------------------------------- */
 
+/* Spelled-out description of the active sort key + direction, shown on the
+ * status bar. Folders always sort before files regardless of this. */
+static const char* sort_label(void) {
+  switch (g_sortkey) {
+    case FS_SORT_SIZE: return g_sortrev ? "Size big-small" : "Size small-big";
+    case FS_SORT_DATE: return g_sortrev ? "Date new-old"   : "Date old-new";
+    case FS_SORT_NAME:
+    default:           return g_sortrev ? "Name Z-A"       : "Name A-Z";
+  }
+}
+
 static void render_browser(int sel, int top) {
   ui_clear();
   int rows = br_rows();
@@ -270,34 +281,31 @@ static void render_browser(int sel, int top) {
     char szb[16]; human_size(msz, szb);
     siprintf(st, "SEL %d marked  %s", mc, szb);
   } else {
-    char kc = (g_sortkey == FS_SORT_NAME) ? 'N'
-            : (g_sortkey == FS_SORT_SIZE) ? 'S' : 'D';
+    /* elaborate sort label + scroll position + free space */
     if (g_free_ok)
-      siprintf(st, "%lu/%luMB sort:%c%c %d/%d%s",
-               (unsigned long)(g_free >> 20), (unsigned long)(g_total >> 20),
-               kc, g_sortrev ? 'v' : '^', rows ? sel + 1 : 0, rows,
-               g_trunc ? " +" : "");
+      siprintf(st, "%s %d/%d %luMB%s", sort_label(), rows ? sel + 1 : 0, rows,
+               (unsigned long)(g_free >> 20), g_trunc ? " +" : "");
     else
-      siprintf(st, "free? sort:%c%c %d/%d%s", kc, g_sortrev ? 'v' : '^',
-               rows ? sel + 1 : 0, rows, g_trunc ? " +" : "");
+      siprintf(st, "%s %d/%d%s", sort_label(), rows ? sel + 1 : 0, rows,
+               g_trunc ? " +" : "");
   }
   ui_truncate(stt, st, 29);
   ui_text(2, STATUS_Y, UI_OK, stt);
 
   if (g_selmode) {
-    ui_text(2, FOOT_Y, UI_OK, "A mark ST all SE batch B exit");
+    ui_text(2, FOOT_Y, UI_OK, "SE mark ST all A batch B exit");
   } else if (g_clip_op != CLIP_NONE) {
     char fb[128], ft[128];
     if (g_clip_count == 1) {
       char nbf[64]; ui_truncate(nbf, g_clip_buf, 14);
-      siprintf(fb, "[%s] %s  SE:paste", g_clip_op == CLIP_CUT ? "CUT" : "COPY", nbf);
+      siprintf(fb, "[%s] %s  A:paste", g_clip_op == CLIP_CUT ? "CUT" : "COPY", nbf);
     } else {
-      siprintf(fb, "[%s] %d items  SE:paste", g_clip_op == CLIP_CUT ? "CUT" : "COPY", g_clip_count);
+      siprintf(fb, "[%s] %d items  A:paste", g_clip_op == CLIP_CUT ? "CUT" : "COPY", g_clip_count);
     }
     ui_truncate(ft, fb, 29);
     ui_text(2, FOOT_Y, UI_WARN, ft);
   } else {
-    ui_text(2, FOOT_Y, UI_DIM, "A open B up  ST sort  SE menu");
+    ui_text(2, FOOT_Y, UI_DIM, "SE open B up A menu ST:sort");
   }
 }
 
@@ -842,22 +850,22 @@ static void run_browser(void) {
 
     if (mv & KEY_DOWN)        { if (rows) sel = (sel + 1) % rows; }
     else if (mv & KEY_UP)     { if (rows) sel = (sel == 0) ? rows - 1 : sel - 1; }
-    else if (hit & KEY_LEFT)  { sel = 0; }
-    else if (hit & KEY_RIGHT) { sel = rows ? rows - 1 : 0; }
-    else if (hit & KEY_L)     { sel -= LIST_ROWS; if (sel < 0) sel = 0; }
-    else if (hit & KEY_R)     { sel += LIST_ROWS; if (sel >= rows) sel = rows ? rows - 1 : 0; }
+    else if (hit & KEY_LEFT)  { sel -= 11; if (sel < 0) sel = 0; }                       /* jump 11 up   */
+    else if (hit & KEY_RIGHT) { sel += 11; if (sel >= rows) sel = rows ? rows - 1 : 0; } /* jump 11 down */
+    else if (hit & KEY_L)     { sel -= LIST_ROWS; if (sel < 0) sel = 0; }                /* page up   */
+    else if (hit & KEY_R)     { sel += LIST_ROWS; if (sel >= rows) sel = rows ? rows - 1 : 0; } /* page down */
     else if (g_selmode) {
-      /* selection mode: A marks the highlighted entry, START marks all/none,
-       * SELECT opens batch actions, B leaves selection mode. */
-      if (hit & KEY_A) {
+      /* selection mode: SELECT marks the highlighted entry, START marks all/none,
+       * A opens batch actions, B leaves selection mode. */
+      if (hit & KEY_SELECT) {
         FsEntry* e = br_entry(sel);
         if (e) { int idx = (int)(e - g_entries); g_marked[idx] = !g_marked[idx]; }
       } else if (hit & KEY_START) {
         bool none = (marked_count() == 0);
         for (int i = 0; i < g_n; i++) g_marked[i] = none;   /* none -> all, else clear */
-      } else if (hit & KEY_SELECT) {
+      } else if (hit & KEY_A) {
         int mc = marked_count();
-        if (mc == 0) msg_screen("No items marked", UI_DIM, "A marks the highlighted item");
+        if (mc == 0) msg_screen("No items marked", UI_DIM, "SELECT marks the highlighted item");
         else if (batch_menu(mc)) { rescan(); sel = 0; top = 0; }
       } else if (hit & KEY_B) {
         g_selmode = false;
@@ -872,13 +880,13 @@ static void run_browser(void) {
       fsop_sort(g_entries, g_n, g_sortkey, g_sortrev);
       sel = 0; top = 0;
     }
-    else if (hit & KEY_SELECT) {
+    else if (hit & KEY_A) {
       if (actions_menu(br_entry(sel))) { rescan(); }   /* menu may mutate the dir */
     }
     else if (hit & KEY_B) {
       if (!at_root()) { path_up(); rescan(); sel = 0; top = 0; }
     }
-    else if (hit & KEY_A) {
+    else if (hit & KEY_SELECT) {                        /* open folder / view file */
       FsEntry* e = br_entry(sel);
       if (!e) {                                   /* [..] up-entry */
         if (!at_root()) { path_up(); rescan(); sel = 0; top = 0; }
