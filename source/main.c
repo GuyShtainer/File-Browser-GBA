@@ -1,0 +1,665 @@
+/*
+ * SD File Browser (sd-browser) — a GBA-native microSD file manager.
+ *
+ * Phase 0 (this build): read-only browser. Runs on BOTH EZ-Flash Omega DE and
+ * EverDrive GBA X5 (read works on both). Navigate folders, sort the listing,
+ * see free space, and inspect file properties. No writes, no text entry yet —
+ * those arrive in Phase 1 (on-screen keyboard + mkdir/delete/attrs, Omega-only).
+ *
+ * Keys:
+ *   UP/DOWN  move (auto-repeat on hold)
+ *   LEFT     jump to top of listing      RIGHT  jump to bottom
+ *   L        page up                     R      page down
+ *   A        open folder / file properties
+ *   B        up one folder
+ *   START    cycle sort key (Name -> Size -> Date)
+ *   SELECT   toggle sort direction (^ ascending / v descending)
+ *
+ * Reuses the toolkit's shared layer: flashcartio (cart detect + sector I/O),
+ * FatFs (lib/fatfs), the cartridge RTC (file timestamps), the triple logger
+ * (source/log.*), and the Mode-3 bitmap UI (ui.c, vendored from the
+ * record-mixer). Generic file ops live in fs_ops.c (pure C, host-testable).
+ */
+
+#include <tonc.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "flashcartio.h"
+#include "ff.h"
+#include "log.h"
+#include "ui.h"
+#include "fs_ops.h"
+#include "osk.h"
+
+#define LOG_PATH  "/sdbrowse_log.txt"
+#define FS_MAX    256
+#define PATH_MAX  256
+
+/* ---- layout (pixels) ---------------------------------------------------- */
+#define HDR_Y         0
+#define BOX_Y         10
+#define BOX_H         100
+#define ROW0_Y        13
+#define ROW_H         8
+#define LIST_ROWS     12
+#define DETAIL_NAME_Y 112   /* selected entry: full-ish name              */
+#define DETAIL_META_Y 122   /* selected entry: date/time + size           */
+#define STATUS_Y      134
+#define FOOT_Y        150
+
+/* ---- browser state ------------------------------------------------------ */
+static FsEntry  EWRAM_BSS g_entries[FS_MAX];
+static int                g_n = 0;
+static bool               g_trunc = false;
+static char     EWRAM_BSS g_cwd[PATH_MAX];
+static FsSortKey          g_sortkey = FS_SORT_NAME;
+static bool               g_sortrev = false;
+static uint64_t           g_free = 0, g_total = 0;
+static bool               g_free_ok = false;
+
+/* ---- frame tick + input ------------------------------------------------- */
+
+static void vsync(void) { VBlankIntrWait(); key_poll(); }
+
+static u16 wait_keys(u16 mask) {
+  u16 hit;
+  do { vsync(); hit = key_hit(mask); } while (!hit);
+  return hit;
+}
+
+static void show_msg(const char* title, const char* body) {
+  ui_clear();
+  ui_text(6, 70, UI_TITLE, title);
+  if (body) ui_text(6, 84, UI_TEXT, body);
+}
+
+static void halt_msg(const char* msg) {
+  log_line("HALT: %s", msg);
+  log_flush_to_sd(LOG_PATH);
+  ui_clear();
+  ui_text(6, 60, UI_WARN, "HALT");
+  ui_text(6, 76, UI_TEXT, msg);
+  while (1) vsync();
+}
+
+/* ---- path helpers ------------------------------------------------------- */
+
+static bool at_root(void) { return g_cwd[0] == '/' && g_cwd[1] == 0; }
+
+static const char* base_name(const char* path) {
+  const char* p = strrchr(path, '/');
+  return p ? p + 1 : path;
+}
+
+static bool path_join(const char* dir, const char* name, char* out) {
+  unsigned dl = (unsigned)strlen(dir), nl = (unsigned)strlen(name);
+  if (dl == 1 && dir[0] == '/') {
+    if (1 + nl + 1 > PATH_MAX) return false;
+    siprintf(out, "/%s", name);
+  } else {
+    if (dl + 1 + nl + 1 > PATH_MAX) return false;
+    siprintf(out, "%s/%s", dir, name);
+  }
+  return true;
+}
+
+static void path_up(void) {
+  int l = (int)strlen(g_cwd);
+  if (l <= 1) return;
+  int i = l - 1;
+  while (i > 0 && g_cwd[i] != '/') i--;
+  if (i == 0) g_cwd[1] = 0; else g_cwd[i] = 0;
+}
+
+/* ---- DOS date/time + formatting ---------------------------------------- */
+
+static void dos_date(u32 d, int* yr, int* mo, int* dy) {
+  u32 fd = d >> 16;
+  *yr = (int)(((fd >> 9) & 0x7F) + 1980);
+  *mo = (int)((fd >> 5) & 0xF);
+  *dy = (int)(fd & 0x1F);
+}
+static void dos_time(u32 d, int* hh, int* mm) {
+  u32 ft = d & 0xFFFF;
+  *hh = (int)((ft >> 11) & 0x1F);
+  *mm = (int)((ft >> 5) & 0x3F);
+}
+
+/* "YYYY-MM-DD HH:MM", or "(no date)" when the entry has no timestamp. */
+static void fmt_datetime(u32 dosdt, char* out) {
+  if (dosdt == 0) { strcpy(out, "(no date)"); return; }
+  int yr, mo, dy, hh, mm;
+  dos_date(dosdt, &yr, &mo, &dy);
+  dos_time(dosdt, &hh, &mm);
+  siprintf(out, "%04d-%02d-%02d %02d:%02d", yr, mo, dy, hh, mm);
+}
+
+/* Human-readable size without floating point (one decimal place). */
+static void human_size(uint64_t b, char* out) {
+  if (b < 1024ULL)
+    siprintf(out, "%lu B", (unsigned long)b);
+  else if (b < 1024ULL * 1024)
+    siprintf(out, "%lu.%lu KB", (unsigned long)(b >> 10),
+             (unsigned long)((b & 1023) * 10 / 1024));
+  else if (b < 1024ULL * 1024 * 1024)
+    siprintf(out, "%lu.%lu MB", (unsigned long)(b >> 20),
+             (unsigned long)(((b >> 10) & 1023) * 10 / 1024));
+  else
+    siprintf(out, "%lu.%lu GB", (unsigned long)(b >> 30),
+             (unsigned long)(((b >> 20) & 1023) * 10 / 1024));
+}
+
+static void attrib_str(uint8_t a, char* o) {
+  o[0] = (a & AM_DIR) ? 'D' : '-';
+  o[1] = (a & AM_RDO) ? 'R' : '-';
+  o[2] = (a & AM_HID) ? 'H' : '-';
+  o[3] = (a & AM_SYS) ? 'S' : '-';
+  o[4] = (a & AM_ARC) ? 'A' : '-';
+  o[5] = 0;
+}
+
+/* ---- listing model ------------------------------------------------------ */
+/* Row 0 is a synthetic "[..]" up-entry whenever we are not at the root. */
+
+static int br_rows(void) { return g_n + (at_root() ? 0 : 1); }
+
+static FsEntry* br_entry(int row) {
+  if (!at_root()) {
+    if (row == 0) return NULL;        /* the [..] row */
+    row -= 1;
+  }
+  if (row < 0 || row >= g_n) return NULL;
+  return &g_entries[row];
+}
+
+static void rescan(void) {
+  show_msg("Reading...", g_cwd);
+  int r = fsop_list(g_cwd, g_entries, FS_MAX, &g_trunc);
+  g_n = (r < 0) ? 0 : r;
+  if (r < 0) log_line("opendir %s failed", g_cwd);
+  fsop_sort(g_entries, g_n, g_sortkey, g_sortrev);
+  uint64_t f = 0, t = 0;
+  g_free_ok = (fsop_freespace(g_cwd, &f, &t) == FR_OK);
+  g_free = f; g_total = t;
+  log_line("scan %s: %d entries%s", g_cwd, g_n, g_trunc ? " (capped)" : "");
+}
+
+/* ---- rendering ---------------------------------------------------------- */
+
+static void render_browser(int sel, int top) {
+  ui_clear();
+  int rows = br_rows();
+
+  /* ui_truncate caps DISPLAY COLUMNS, not bytes; a UTF-8 name can be up to
+   * 4 bytes/column, so these must hold max_cols*4+1 (plus the row suffix). */
+  char line[128], nbuf[128], hdr[128];
+  ui_truncate(hdr, g_cwd, 29);
+  ui_text(2, HDR_Y, UI_TITLE, hdr);
+
+  ui_panel(0, BOX_Y, 240, BOX_H, UI_PANEL, UI_BORDER);
+  for (int r = 0; r < LIST_ROWS; r++) {
+    int row = top + r;
+    if (row >= rows) break;
+    int y = ROW0_Y + r * ROW_H;
+    FsEntry* e = br_entry(row);
+    u16 ink;
+    if (!e) {
+      siprintf(line, "[..]  up one folder");
+      ink = UI_WARN;
+    } else if (e->is_dir) {
+      ui_truncate(nbuf, e->name, 20);
+      siprintf(line, "%-20s    <DIR>", nbuf);
+      ink = UI_DIRCLR;
+    } else {
+      char szb[16];
+      human_size(e->size, szb);
+      ui_truncate(nbuf, e->name, 16);
+      siprintf(line, "%-16s %9s", nbuf, szb);
+      ink = UI_SAVECLR;
+    }
+    ui_text_sel(3, y, 234, row == sel, ink, line);
+  }
+
+  /* per-selection detail: a fuller name (29 cols vs the list's ~16) plus the
+   * file's date/time and size — the full name lives in Properties (SELECT). */
+  {
+    FsEntry* se = br_entry(sel);
+    char dn[128], dm[128], dt[20];
+    if (!se) {
+      ui_text(2, DETAIL_NAME_Y, UI_DIRCLR, "[..] parent folder");
+    } else {
+      ui_truncate(dn, se->name, 29);
+      ui_text(2, DETAIL_NAME_Y, UI_SELTEXT, dn);
+      fmt_datetime(se->dosdt, dt);
+      if (se->is_dir) {
+        siprintf(dm, "%s  <DIR>", dt);
+      } else {
+        char szb[16];
+        human_size(se->size, szb);
+        siprintf(dm, "%s  %s", dt, szb);
+      }
+      ui_text(2, DETAIL_META_Y, UI_DIM, dm);
+    }
+  }
+
+  char st[48], stt[48];
+  char kc = (g_sortkey == FS_SORT_NAME) ? 'N'
+          : (g_sortkey == FS_SORT_SIZE) ? 'S' : 'D';
+  if (g_free_ok)
+    siprintf(st, "%lu/%luMB sort:%c%c %d/%d%s",
+             (unsigned long)(g_free >> 20), (unsigned long)(g_total >> 20),
+             kc, g_sortrev ? 'v' : '^', rows ? sel + 1 : 0, rows,
+             g_trunc ? " +" : "");
+  else
+    siprintf(st, "free? sort:%c%c %d/%d%s", kc, g_sortrev ? 'v' : '^',
+             rows ? sel + 1 : 0, rows, g_trunc ? " +" : "");
+  ui_truncate(stt, st, 29);
+  ui_text(2, STATUS_Y, UI_OK, stt);
+
+  ui_text(2, FOOT_Y, UI_DIM, "A open B up  ST sort  SE menu");
+}
+
+static void properties_screen(const FsEntry* e) {
+  ui_clear();
+  ui_text(2, HDR_Y, UI_TITLE, "PROPERTIES");
+  ui_panel(2, 12, 236, 120, UI_PANEL, UI_BORDER);
+
+  int x = 8, y = 18;
+  char line[160], szb[24], at[8], dt[20];
+
+  /* full name, wrapped across up to 5 lines (~28 display cols each), advancing
+   * a UTF-8-aware pointer so a multi-byte codepoint is never split. */
+  ui_text(x, y, UI_DIM, "Name:"); y += 11;
+  {
+    const char* p = e->name;
+    for (int ln = 0; ln < 5 && *p; ln++) {
+      char seg[128];
+      int cols = 0, b = 0;
+      while (*p && cols < 28 && b < 120) {
+        unsigned char c = (unsigned char)*p;
+        int clen = (c < 0x80) ? 1 : (c < 0xE0) ? 2 : (c < 0xF0) ? 3 : 4;
+        for (int k = 0; k < clen && *p; k++) seg[b++] = *p++;
+        cols++;
+      }
+      seg[b] = 0;
+      ui_text(x + 6, y, UI_TEXT, seg); y += 10;
+    }
+    if (*p) { ui_text(x + 6, y, UI_DIM, "(name truncated)"); y += 10; }
+  }
+  y += 3;
+
+  siprintf(line, "Type: %s", e->is_dir ? "Folder" : "File");
+  ui_text(x, y, UI_TEXT, line); y += 12;
+
+  if (!e->is_dir) {
+    human_size(e->size, szb);
+    if (e->size >> 32) siprintf(line, "Size: %s", szb);
+    else siprintf(line, "Size: %s (%lu bytes)", szb, (unsigned long)e->size);
+    ui_text(x, y, UI_TEXT, line); y += 12;
+  }
+
+  fmt_datetime(e->dosdt, dt);
+  siprintf(line, "Modified: %s", dt);
+  ui_text(x, y, UI_TEXT, line); y += 12;
+
+  attrib_str(e->attrib, at);
+  siprintf(line, "Attr: %s", at);  ui_text(x, y, UI_DIM, line);
+
+  ui_text(2, FOOT_Y, UI_DIM, "B = back");
+  wait_keys(KEY_B);
+}
+
+/* ---- write actions (Phase 1: Omega-only) ------------------------------- */
+
+static bool can_write(void) { return active_flashcart == EZ_FLASH_OMEGA; }
+
+static const char* fr_str(FRESULT fr) {
+  switch (fr) {
+    case FR_OK:              return "OK";
+    case FR_EXIST:           return "already exists";
+    case FR_DENIED:          return "denied (read-only?)";
+    case FR_NO_FILE:
+    case FR_NO_PATH:         return "not found";
+    case FR_WRITE_PROTECTED: return "write protected";
+    case FR_INVALID_NAME:    return "invalid name";
+    case FR_NOT_ENOUGH_CORE: return "name too long / too deep";
+    case FR_DISK_ERR:        return "SD error";
+    case FR_TIMEOUT:         return "timeout";
+    default:                 return "error";
+  }
+}
+
+static bool confirm(const char* l1, const char* l2) {
+  ui_clear();
+  ui_text(6, 40, UI_WARN, "CONFIRM");
+  if (l1) ui_text(6, 64, UI_TEXT, l1);
+  if (l2) ui_text(6, 78, UI_WARN, l2);
+  ui_text(6, 110, UI_DIM, "A = yes      B = no");
+  return (wait_keys(KEY_A | KEY_B) & KEY_A) != 0;
+}
+
+static void msg_screen(const char* title, u16 ink, const char* body) {
+  ui_clear();
+  ui_text(6, 50, ink, title);
+  if (body) ui_text(6, 72, UI_TEXT, body);
+  ui_text(6, 110, UI_DIM, "B = back");
+  wait_keys(KEY_B);
+}
+
+static bool do_mkdir(void) {
+  char name[128], np[PATH_MAX];
+  if (!osk_input("New folder name:", NULL, name, sizeof(name))) return false;
+  if (!path_join(g_cwd, name, np)) { msg_screen("Path too long", UI_WARN, NULL); return false; }
+  log_line("mkdir %s", np);
+  FRESULT fr = fsop_mkdir(np);
+  log_line("mkdir -> %d (%s)", fr, fr_str(fr));
+  log_flush_to_sd(LOG_PATH);
+  if (fr != FR_OK) { msg_screen("Create failed", UI_WARN, fr_str(fr)); return false; }
+  return true;
+}
+
+static bool do_delete(const FsEntry* e) {
+  char np[PATH_MAX], l1[48], nb[34];
+  if (!path_join(g_cwd, e->name, np)) { msg_screen("Path too long", UI_WARN, NULL); return false; }
+  ui_truncate(nb, e->name, 22);
+  siprintf(l1, "Delete %s ?", nb);
+  if (!confirm(l1, e->is_dir ? "FOLDER + ALL its contents!" : NULL)) return false;
+  show_msg("Deleting...", e->name);
+  log_line("delete %s (dir=%d)", np, e->is_dir);
+  FRESULT fr = fsop_delete(np);
+  log_line("delete -> %d (%s)", fr, fr_str(fr));
+  log_flush_to_sd(LOG_PATH);
+  if (fr != FR_OK) { msg_screen("Delete failed", UI_WARN, fr_str(fr)); return false; }
+  return true;
+}
+
+static bool do_rename(const FsEntry* e) {
+  char newname[128], oldp[PATH_MAX], newp[PATH_MAX];
+  if (!osk_input("Rename to:", e->name, newname, sizeof(newname))) return false;
+  if (!strcmp(newname, e->name)) return false;            /* unchanged */
+  if (!path_join(g_cwd, e->name, oldp) ||
+      !path_join(g_cwd, newname, newp)) { msg_screen("Path too long", UI_WARN, NULL); return false; }
+  log_line("rename %s -> %s", oldp, newp);
+  FRESULT fr = fsop_rename(oldp, newp);                    /* FR_EXIST if target exists */
+  log_line("rename -> %d (%s)", fr, fr_str(fr));
+  log_flush_to_sd(LOG_PATH);
+  if (fr != FR_OK) { msg_screen("Rename failed", UI_WARN, fr_str(fr)); return false; }
+  return true;
+}
+
+static bool do_chmod_toggle(const FsEntry* e, u8 mask) {
+  char np[PATH_MAX];
+  if (!path_join(g_cwd, e->name, np)) return false;
+  u8 set = (e->attrib & mask) ? 0 : mask;   /* toggle the bit */
+  FRESULT fr = fsop_chmod(np, set, mask);
+  log_line("chmod %s set=%02x mask=%02x -> %d", np, set, mask, fr);
+  log_flush_to_sd(LOG_PATH);
+  if (fr != FR_OK) { msg_screen("Attr change failed", UI_WARN, fr_str(fr)); return false; }
+  return true;
+}
+
+/* Per-entry action menu (SELECT). Returns true if the listing must be
+ * rescanned (a mutation succeeded). Write actions appear only on EZ-Flash
+ * Omega; on EverDrive the tool stays read-only. `e` is NULL on the [..] row. */
+static bool actions_menu(const FsEntry* e) {
+  enum { A_INFO, A_RENAME, A_RDO, A_HID, A_DELETE, A_MKDIR };
+  int  ids[7];
+  char labels[7][32];
+  int  ni = 0;
+
+  if (e) { ids[ni] = A_INFO; strcpy(labels[ni++], "Info / properties"); }
+  if (can_write()) {
+    if (e) {
+      ids[ni] = A_RENAME; strcpy(labels[ni++], "Rename");
+      ids[ni] = A_RDO; siprintf(labels[ni++], "Read-only: %s", (e->attrib & AM_RDO) ? "ON" : "off");
+      ids[ni] = A_HID; siprintf(labels[ni++], "Hidden: %s",    (e->attrib & AM_HID) ? "ON" : "off");
+      ids[ni] = A_DELETE; strcpy(labels[ni++], e->is_dir ? "Delete folder" : "Delete file");
+    }
+    ids[ni] = A_MKDIR; strcpy(labels[ni++], "New folder here");
+  }
+
+  int sel = 0;
+  bool dirty = true;
+  while (1) {
+    if (dirty) {
+      ui_clear();
+      char hb[48], nb[28], hh[48];
+      ui_truncate(nb, e ? e->name : "(parent)", 18);
+      siprintf(hb, "Actions: %s", nb);
+      ui_truncate(hh, hb, 29);
+      ui_text(2, HDR_Y, UI_TITLE, hh);
+      ui_panel(0, 12, 240, 118, UI_PANEL, UI_BORDER);
+      for (int i = 0; i < ni; i++)
+        ui_text_sel(4, 18 + i * 12, 232, i == sel, UI_TEXT, labels[i]);
+      if (!can_write())
+        ui_text(4, 18 + ni * 12 + 6, UI_DIM, "Writes need EZ-Flash Omega");
+      ui_text(2, FOOT_Y, UI_DIM, "A do   B back");
+      dirty = false;
+    }
+    vsync();
+    u16 mv  = key_repeat(KEY_UP | KEY_DOWN);
+    u16 hit = key_hit(KEY_A | KEY_B);
+    if (!mv && !hit) continue;
+    dirty = true;
+    if (hit & KEY_B) return false;
+    else if (mv & KEY_DOWN) { if (ni) sel = (sel + 1) % ni; }
+    else if (mv & KEY_UP)   { if (ni) sel = (sel == 0) ? ni - 1 : sel - 1; }
+    else if ((hit & KEY_A) && ni) {
+      switch (ids[sel]) {
+        case A_INFO:   properties_screen(e);                 break;
+        case A_RENAME: if (do_rename(e))               return true; break;
+        case A_RDO:    if (do_chmod_toggle(e, AM_RDO)) return true; break;
+        case A_HID:    if (do_chmod_toggle(e, AM_HID)) return true; break;
+        case A_DELETE: if (do_delete(e))               return true; break;
+        case A_MKDIR:  if (do_mkdir())                 return true; break;
+      }
+      dirty = true;
+    }
+  }
+}
+
+/* ---- read-only file viewer (hex / text) -------------------------------- */
+
+#define VIEW_ROWS 15
+#define HEX_BPR   8
+#define TXT_BPR   28
+static u8 EWRAM_BSS g_viewbuf[VIEW_ROWS * TXT_BPR];   /* 420 B page window */
+
+static void render_view(const char* name, uint64_t size, uint64_t off,
+                        const uint8_t* buf, uint32_t got, bool hex) {
+  ui_clear();
+  char line[80], nb[64], hbuf[96];
+  ui_truncate(nb, name, 22);
+  siprintf(hbuf, "%s [%s]", nb, hex ? "HEX" : "TXT");
+  ui_truncate(line, hbuf, 29);
+  ui_text(2, HDR_Y, UI_TITLE, line);
+
+  int bpr = hex ? HEX_BPR : TXT_BPR;
+  if (got == 0) {
+    ui_text(8, 12, UI_DIM, "(empty file)");
+  } else {
+    for (int r = 0; r < VIEW_ROWS; r++) {
+      uint32_t ro = (uint32_t)(r * bpr);
+      if (ro >= got) break;
+      int y = 10 + r * 8;
+      if (hex) {
+        char* p = line;
+        p += siprintf(p, "%05lX:", (unsigned long)(off + ro));
+        for (int i = 0; i < HEX_BPR; i++) {
+          if ((i & 1) == 0) *p++ = ' ';
+          if (ro + (uint32_t)i < got) p += siprintf(p, "%02X", buf[ro + i]);
+          else { *p++ = ' '; *p++ = ' '; }
+        }
+        *p = 0;
+        ui_text(2, y, UI_SAVECLR, line);
+      } else {
+        char t[TXT_BPR + 1];
+        int c = 0;
+        for (; c < bpr && ro + (uint32_t)c < got; c++) {
+          uint8_t ch = buf[ro + c];
+          t[c] = (ch >= 0x20 && ch <= 0x7E) ? (char)ch : '.';
+        }
+        t[c] = 0;
+        ui_text(2, y, UI_TEXT, t);
+      }
+    }
+  }
+
+  char st[48], stt[48];
+  unsigned long pct = size ? (unsigned long)((off * 100) / size) : 100;
+  siprintf(st, "off %lu/%lu  %lu%%", (unsigned long)off, (unsigned long)size, pct);
+  ui_truncate(stt, st, 29);
+  ui_text(2, STATUS_Y, UI_OK, stt);
+  ui_text(2, FOOT_Y, UI_DIM, "A hex/txt  L/R page  B back");
+}
+
+/* Page-windowed viewer: keeps a byte offset and re-reads one screen worth of
+ * bytes on each move (f_lseek + f_read into an EWRAM buffer), so it handles
+ * files far larger than RAM. Reads happen BEFORE render() — never mid-transfer
+ * with the ROM unmapped. */
+static void file_viewer(const char* path, const char* name, uint64_t size) {
+  FIL f;
+  if (f_open(&f, path, FA_READ) != FR_OK) {
+    show_msg("Open failed", base_name(path));
+    ui_text(6, 100, UI_DIM, "B = back");
+    wait_keys(KEY_B);
+    return;
+  }
+
+  bool hex = true;        /* default to hex — robust for any file type */
+  uint64_t off = 0;
+  uint32_t got = 0;
+  bool dirty = true;
+
+  while (1) {
+    int bpr = hex ? HEX_BPR : TXT_BPR;
+    uint32_t page = (uint32_t)(VIEW_ROWS * bpr);
+    if (size == 0) off = 0;
+    else { uint64_t mo = ((size - 1) / bpr) * bpr; if (off > mo) off = mo; }
+
+    if (dirty) {
+      UINT br = 0;
+      if (f_lseek(&f, off) == FR_OK) f_read(&f, g_viewbuf, page, &br);
+      got = (uint32_t)br;
+      render_view(name, size, off, g_viewbuf, got, hex);
+      dirty = false;
+    }
+
+    vsync();
+    u16 mv  = key_repeat(KEY_UP | KEY_DOWN);
+    u16 hit = key_hit(KEY_A | KEY_B | KEY_L | KEY_R | KEY_LEFT | KEY_RIGHT);
+    if (!mv && !hit) continue;
+    dirty = true;
+
+    if (hit & KEY_B)          { f_close(&f); return; }
+    else if (hit & KEY_A)     { hex = !hex; }                 /* toggle mode */
+    else if (mv & KEY_DOWN)   { off += (uint32_t)bpr; }       /* clamped at top */
+    else if (mv & KEY_UP)     { off = (off >= (uint32_t)bpr) ? off - (uint32_t)bpr : 0; }
+    else if (hit & KEY_R)     { off += page; }
+    else if (hit & KEY_L)     { off = (off >= page) ? off - page : 0; }
+    else if (hit & KEY_LEFT)  { off = 0; }
+    else if (hit & KEY_RIGHT) { off = (size > 0) ? (size - 1) : 0; }  /* clamp -> last page */
+  }
+}
+
+/* ---- main loop ---------------------------------------------------------- */
+
+static void run_browser(void) {
+  int sel = 0, top = 0;
+  bool dirty = true;
+  rescan();
+
+  while (1) {
+    int rows = br_rows();
+    if (rows == 0) sel = 0; else if (sel >= rows) sel = rows - 1;
+    if (sel < 0) sel = 0;
+    if (sel < top) top = sel;
+    if (sel >= top + LIST_ROWS) top = sel - LIST_ROWS + 1;
+    if (top < 0) top = 0;
+
+    if (dirty) { render_browser(sel, top); dirty = false; }
+
+    vsync();
+    u16 mv  = key_repeat(KEY_UP | KEY_DOWN);
+    u16 hit = key_hit(KEY_A | KEY_B | KEY_L | KEY_R | KEY_LEFT | KEY_RIGHT |
+                      KEY_START | KEY_SELECT);
+    if (!mv && !hit) continue;
+    dirty = true;
+
+    if (mv & KEY_DOWN)        { if (rows) sel = (sel + 1) % rows; }
+    else if (mv & KEY_UP)     { if (rows) sel = (sel == 0) ? rows - 1 : sel - 1; }
+    else if (hit & KEY_LEFT)  { sel = 0; }
+    else if (hit & KEY_RIGHT) { sel = rows ? rows - 1 : 0; }
+    else if (hit & KEY_L)     { sel -= LIST_ROWS; if (sel < 0) sel = 0; }
+    else if (hit & KEY_R)     { sel += LIST_ROWS; if (sel >= rows) sel = rows ? rows - 1 : 0; }
+    else if (hit & KEY_START) {
+      /* cycle the 6 sort states: Name/Size/Date x ascending/descending */
+      int s = ((int)g_sortkey * 2 + (g_sortrev ? 1 : 0) + 1) % 6;
+      g_sortkey = (FsSortKey)(s / 2);
+      g_sortrev = (s & 1) != 0;
+      fsop_sort(g_entries, g_n, g_sortkey, g_sortrev);
+      sel = 0; top = 0;
+    }
+    else if (hit & KEY_SELECT) {
+      if (actions_menu(br_entry(sel))) { rescan(); }   /* menu may mutate the dir */
+    }
+    else if (hit & KEY_B) {
+      if (!at_root()) { path_up(); rescan(); sel = 0; top = 0; }
+    }
+    else if (hit & KEY_A) {
+      FsEntry* e = br_entry(sel);
+      if (!e) {                                   /* [..] up-entry */
+        if (!at_root()) { path_up(); rescan(); sel = 0; top = 0; }
+      } else if (e->is_dir) {
+        char np[PATH_MAX];
+        if (path_join(g_cwd, e->name, np)) { strcpy(g_cwd, np); rescan(); sel = 0; top = 0; }
+      } else {
+        char np[PATH_MAX];
+        if (path_join(g_cwd, e->name, np)) file_viewer(np, e->name, e->size);
+      }
+    }
+  }
+}
+
+/* ---- bring-up ----------------------------------------------------------- */
+
+static void init_system(void) {
+  irq_init(NULL);
+  irq_add(II_VBLANK, NULL);
+  ui_init();
+  key_repeat_mask(KEY_UP | KEY_DOWN);
+  key_repeat_limits(16, 4);   /* hold ~0.27s, then repeat ~15/s */
+}
+
+static const char* flashcart_name(void) {
+  switch (active_flashcart) {
+    case EVERDRIVE_GBA_X5: return "EverDrive GBA X5";
+    case EZ_FLASH_OMEGA:   return "EZ-Flash Omega/DE";
+    default:               return "none";
+  }
+}
+
+int main(void) {
+  init_system();
+  g_cwd[0] = '/'; g_cwd[1] = 0;
+
+  log_init();
+  log_line("=== SD File Browser (sd-browser, Phase 0) ===");
+  log_line("mGBA debug log: %s", log_under_mgba() ? "active" : "absent");
+
+  show_msg("Detecting flashcart...", NULL);
+  if (!flashcartio_activate()) halt_msg("No flashcart detected!");
+  log_line("flashcart: %s", flashcart_name());
+
+  static FATFS fs;
+  FRESULT fr = f_mount(&fs, "", 1);
+  if (fr != FR_OK) { log_line("f_mount failed (fr=%d)", fr); halt_msg("SD mount failed!"); }
+  log_line("SD mounted OK");
+
+  int wr = log_flush_to_sd(LOG_PATH);
+  log_line("log flush -> %s", wr == 0 ? "OK" : "FAILED");
+
+  run_browser();
+  return 0;
+}
