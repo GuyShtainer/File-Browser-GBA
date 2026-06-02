@@ -15,10 +15,10 @@ family described in [`../../docs/ROADMAP.md`](../../docs/ROADMAP.md) (Project A)
 - A **detail panel** under the list showing the highlighted entry's fuller name and its
   **date / time + size** (the complete name lives in Properties)
 - File-type rows, and a read-only **file viewer** (Hex / Text, page-windowed so it
-  handles files larger than RAM) via `A` on a file
+  handles files larger than RAM) via SELECT on a file
 
 **Phase 1 (write — EZ-Flash Omega only)** — validated on real hardware. Reached via the
-**SELECT** actions menu (write items appear only on the Omega; the EverDrive stays
+**A** actions menu (write items appear only on the Omega; the EverDrive stays
 read-only):
 
 - An **on-screen keyboard** (QWERTY d-pad grid, both cases shown) for typed names,
@@ -37,9 +37,9 @@ read-only):
   indicator shows what's on the clipboard (`[COPY]`/`[CUT]`).
 
 - **Multi-select + batch** — from the actions menu, "Select multiple" enters a
-  selection mode: **A** marks/unmarks the highlighted entry (shown with a `*`),
+  selection mode: **SELECT** marks/unmarks the highlighted entry (shown with a `*`),
   **START** marks all / clears all, the status bar shows the marked count + total
-  size, and **SELECT** opens a batch menu to **Copy / Cut / Delete** all marked
+  size, and **A** opens a batch menu to **Copy / Cut / Delete** all marked
   items at once. **B** leaves selection mode. (Copy/Cut feed the same clipboard,
   so you then navigate and Paste.)
 
@@ -58,20 +58,20 @@ backspaces before it.
 | Key | Action |
 |-----|--------|
 | UP / DOWN | Move cursor (hold to repeat) |
-| LEFT / RIGHT | Jump to top / bottom of the listing |
-| L / R | Page up / page down |
-| A | Open folder · (on a file) open the Hex/Text viewer |
+| LEFT / RIGHT | Jump 11 rows up / down |
+| L / R | Page up / page down (one screen) |
+| SELECT | Open folder · (on a file) open the Hex/Text viewer |
 | B | Up one folder |
-| START | Cycle sort: Name → Size → Date, each `^` ascending / `v` descending (6 states) |
-| SELECT | Open the **actions menu** (Info, and on Omega: rename / copy / cut / paste here / attributes / delete / new folder / select multiple) |
+| START | Cycle the sort: 6 states across Name / Size / Date, each ascending and descending. The status bar spells out the active one — "Name A-Z", "Name Z-A", "Size small-big", "Size big-small", "Date old-new", "Date new-old". Folders always sort before files. |
+| A | Open the **actions menu** (Info, and on Omega: rename / copy / cut / paste here / attributes / delete / new folder / select multiple) |
 
 ### Selection mode (from "Select multiple")
 
 | Key | Action |
 |-----|--------|
-| A | Mark / unmark the highlighted entry (`*`) |
+| SELECT | Mark / unmark the highlighted entry (`*`) |
 | START | Mark all / clear all |
-| SELECT | Batch menu: Copy / Cut / Delete the marked items |
+| A | Batch menu: Copy / Cut / Delete the marked items |
 | B | Leave selection mode |
 
 ### On-screen keyboard (QWERTY)
