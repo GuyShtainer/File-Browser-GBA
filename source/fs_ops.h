@@ -59,6 +59,15 @@ FRESULT fsop_rename(const char* oldpath, const char* newpath);
  * by passing mask=AM_RDO and set = AM_RDO (on) or 0 (off). */
 FRESULT fsop_chmod(const char* path, uint8_t set, uint8_t mask);
 
+/* Copy a file, or an entire directory tree, from `src` to a NEW path `dst`.
+ * Directories are copied recursively using the same explicit-stack walk as the
+ * delete (no C recursion). Existing destination files are overwritten
+ * (FA_CREATE_ALWAYS); the caller is responsible for confirm-overwrite and for
+ * refusing to copy a directory into its own subtree. Returns FR_OK or the first
+ * FatFs error (FR_DENIED on a short write = disk full). For a CUT/move within
+ * the volume use fsop_rename instead — it is atomic and needs no copy. */
+FRESULT fsop_copy(const char* src, const char* dst);
+
 /* Delete a file or an entire directory tree. For a non-empty directory it
  * recursively removes the contents first, using an EXPLICIT stack (never C
  * recursion — the GBA IWRAM stack is only 32 KiB) bounded by

@@ -187,3 +187,108 @@ FRESULT fsop_delete(const char* path) {
   if (fno.fattrib & AM_RDO) f_chmod(path, 0, AM_RDO);   /* clear RO so unlink works */
   return f_unlink(path);
 }
+
+/* ---- copy --------------------------------------------------------------- */
+
+/* Big copy buffer + the dst-path stack live in EWRAM (.sbss, the same section
+ * tonc's EWRAM_BSS uses) so they don't eat the 32 KiB IWRAM stack — declared
+ * here without pulling in tonc/sys headers, keeping this file pure C. The copy
+ * reuses the rmtree DIR stack (s_ds) and src path (s_path); the two ops never
+ * run at the same time. */
+#define FS_EWRAM __attribute__((section(".sbss")))
+static uint8_t FS_EWRAM s_copybuf[4096] __attribute__((aligned(4)));
+static char    FS_EWRAM s_dpath[FS_PATH_CAP];
+static int              s_dplen[FS_RMTREE_MAX_DEPTH];
+
+/* Copy a single file. Overwrites dst (FA_CREATE_ALWAYS); removes a partial dst
+ * on any error so a failed copy never leaves a half-written file behind. */
+static FRESULT copy_one_file(const char* src, const char* dst) {
+  FIL fsrc, fdst;
+  FRESULT fr = f_open(&fsrc, src, FA_READ);
+  if (fr != FR_OK) return fr;
+  fr = f_open(&fdst, dst, FA_WRITE | FA_CREATE_ALWAYS);
+  if (fr != FR_OK) { f_close(&fsrc); return fr; }
+
+  for (;;) {
+    UINT br = 0, bw = 0;
+    fr = f_read(&fsrc, s_copybuf, sizeof(s_copybuf), &br);
+    if (fr != FR_OK || br == 0) break;
+    fr = f_write(&fdst, s_copybuf, br, &bw);
+    if (fr != FR_OK) break;
+    if (bw < br) { fr = FR_DENIED; break; }   /* short write = disk full */
+  }
+
+  FRESULT frc = f_close(&fdst);               /* a write-handle close can surface errors */
+  f_close(&fsrc);
+  if (fr == FR_OK) fr = frc;
+  if (fr != FR_OK) f_unlink(dst);             /* drop the partial destination */
+  return fr;
+}
+
+/* Recursively copy src_root -> dst_root. Mirrors rmtree's explicit-stack walk
+ * but creates dst dirs and copies files. dst_root must NOT be inside src_root
+ * (the caller guards this) or the walk would copy into its own growing tree. */
+static FRESULT copy_tree(const char* src_root, const char* dst_root) {
+  int sn = 0; for (; src_root[sn] && sn < FS_PATH_CAP - 1; sn++) s_path[sn] = src_root[sn];
+  s_path[sn] = 0;
+  int dn = 0; for (; dst_root[dn] && dn < FS_PATH_CAP - 1; dn++) s_dpath[dn] = dst_root[dn];
+  s_dpath[dn] = 0;
+
+  FRESULT fr = f_mkdir(s_dpath);
+  if (fr != FR_OK && fr != FR_EXIST) return fr;
+
+  int depth = 0;
+  fr = f_opendir(&s_ds[0], s_path);
+  if (fr != FR_OK) return fr;
+  s_plen[0] = sn; s_dplen[0] = dn;
+
+  while (depth >= 0) {
+    fr = f_readdir(&s_ds[depth], &s_fno);
+    if (fr != FR_OK) break;
+
+    if (s_fno.fname[0] == 0) {                /* level done: pop */
+      f_closedir(&s_ds[depth]);
+      depth--;
+      if (depth >= 0) { s_path[s_plen[depth]] = 0; s_dpath[s_dplen[depth]] = 0; }
+      continue;
+    }
+
+    int pl = s_plen[depth], dl = s_dplen[depth], nl = (int)strlen(s_fno.fname);
+    if (pl + 1 + nl + 1 > FS_PATH_CAP || dl + 1 + nl + 1 > FS_PATH_CAP) {
+      fr = FR_NOT_ENOUGH_CORE; break;
+    }
+    /* append the child name to both src and dst paths (root has no extra '/') */
+    if (pl == 1 && s_path[0] == '/') { for (int i = 0; i < nl; i++) s_path[1 + i] = s_fno.fname[i]; s_path[1 + nl] = 0; }
+    else { s_path[pl] = '/'; for (int i = 0; i < nl; i++) s_path[pl + 1 + i] = s_fno.fname[i]; s_path[pl + 1 + nl] = 0; }
+    if (dl == 1 && s_dpath[0] == '/') { for (int i = 0; i < nl; i++) s_dpath[1 + i] = s_fno.fname[i]; s_dpath[1 + nl] = 0; }
+    else { s_dpath[dl] = '/'; for (int i = 0; i < nl; i++) s_dpath[dl + 1 + i] = s_fno.fname[i]; s_dpath[dl + 1 + nl] = 0; }
+    int scl = (int)strlen(s_path), dcl = (int)strlen(s_dpath);
+
+    if (s_fno.fattrib & AM_DIR) {             /* make dst dir + descend */
+      fr = f_mkdir(s_dpath);
+      if (fr != FR_OK && fr != FR_EXIST) break;
+      if (depth + 1 >= FS_RMTREE_MAX_DEPTH) { fr = FR_NOT_ENOUGH_CORE; break; }
+      fr = f_opendir(&s_ds[depth + 1], s_path);
+      if (fr != FR_OK) break;
+      depth++;
+      s_plen[depth] = scl; s_dplen[depth] = dcl;
+    } else {                                  /* copy a file */
+      fr = copy_one_file(s_path, s_dpath);
+      if (fr != FR_OK) break;
+      s_path[pl] = 0; s_dpath[dl] = 0;        /* restore parent paths */
+    }
+  }
+
+  if (fr != FR_OK) {
+    for (int i = 0; i <= depth && i < FS_RMTREE_MAX_DEPTH; i++) f_closedir(&s_ds[i]);
+  }
+  return fr;
+}
+
+FRESULT fsop_copy(const char* src, const char* dst) {
+  FILINFO fno;
+  FRESULT fr = f_stat(src, &fno);
+  if (fr != FR_OK) return fr;
+  if (fno.fattrib & AM_DIR) return copy_tree(src, dst);
+  return copy_one_file(src, dst);
+}
