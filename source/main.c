@@ -58,10 +58,21 @@ static bool               g_sortrev = false;
 static uint64_t           g_free = 0, g_total = 0;
 static bool               g_free_ok = false;
 
-/* clipboard for copy/cut/paste (paste target is the current directory) */
+/* Clipboard for copy/cut/paste — a multi-item list captured from ONE source
+ * directory; paste re-creates each item in the current directory. A single
+ * Copy/Cut is just a 1-item clipboard. Names are packed NUL-separated. */
 typedef enum { CLIP_NONE, CLIP_COPY, CLIP_CUT } ClipOp;
-static char     EWRAM_BSS g_clip_path[PATH_MAX];
+#define CLIP_BUF 4096
 static ClipOp             g_clip_op = CLIP_NONE;
+static char     EWRAM_BSS g_clip_dir[PATH_MAX];   /* source directory          */
+static char     EWRAM_BSS g_clip_buf[CLIP_BUF];   /* packed NUL-separated names */
+static int                g_clip_len = 0;         /* used bytes of g_clip_buf   */
+static int                g_clip_count = 0;       /* number of names            */
+
+/* Multi-select: marks align 1:1 with g_entries[] and clear on every rescan
+ * (so they only ever apply to the directory currently shown). */
+static bool     EWRAM_BSS g_marked[FS_MAX];
+static bool               g_selmode = false;
 
 /* ---- frame tick + input ------------------------------------------------- */
 
@@ -180,6 +191,7 @@ static FsEntry* br_entry(int row) {
 
 static void rescan(void) {
   show_msg("Reading...", g_cwd);
+  memset(g_marked, 0, sizeof(g_marked));    /* marks are per-directory */
   int r = fsop_list(g_cwd, g_entries, FS_MAX, &g_trunc);
   g_n = (r < 0) ? 0 : r;
   if (r < 0) log_line("opendir %s failed", g_cwd);
@@ -209,18 +221,21 @@ static void render_browser(int sel, int top) {
     int y = ROW0_Y + r * ROW_H;
     FsEntry* e = br_entry(row);
     u16 ink;
+    /* in selection mode, prefix each row with the mark state of its entry */
+    const char* mk = "";
+    if (g_selmode && e) mk = g_marked[(int)(e - g_entries)] ? "*" : " ";
     if (!e) {
       siprintf(line, "[..]  up one folder");
       ink = UI_WARN;
     } else if (e->is_dir) {
-      ui_truncate(nbuf, e->name, 20);
-      siprintf(line, "%-20s    <DIR>", nbuf);
+      ui_truncate(nbuf, e->name, g_selmode ? 18 : 20);
+      siprintf(line, "%s%-18s    <DIR>", mk, nbuf);
       ink = UI_DIRCLR;
     } else {
       char szb[16];
       human_size(e->size, szb);
-      ui_truncate(nbuf, e->name, 16);
-      siprintf(line, "%-16s %9s", nbuf, szb);
+      ui_truncate(nbuf, e->name, g_selmode ? 14 : 16);
+      siprintf(line, "%s%-15s %9s", mk, nbuf, szb);
       ink = UI_SAVECLR;
     }
     ui_text_sel(3, y, 234, row == sel, ink, line);
@@ -248,24 +263,37 @@ static void render_browser(int sel, int top) {
     }
   }
 
-  char st[48], stt[48];
-  char kc = (g_sortkey == FS_SORT_NAME) ? 'N'
-          : (g_sortkey == FS_SORT_SIZE) ? 'S' : 'D';
-  if (g_free_ok)
-    siprintf(st, "%lu/%luMB sort:%c%c %d/%d%s",
-             (unsigned long)(g_free >> 20), (unsigned long)(g_total >> 20),
-             kc, g_sortrev ? 'v' : '^', rows ? sel + 1 : 0, rows,
-             g_trunc ? " +" : "");
-  else
-    siprintf(st, "free? sort:%c%c %d/%d%s", kc, g_sortrev ? 'v' : '^',
-             rows ? sel + 1 : 0, rows, g_trunc ? " +" : "");
+  char st[64], stt[64];
+  if (g_selmode) {                          /* selection mode: marked count + size */
+    int mc = 0; uint64_t msz = 0;
+    for (int i = 0; i < g_n; i++) if (g_marked[i]) { mc++; msz += g_entries[i].size; }
+    char szb[16]; human_size(msz, szb);
+    siprintf(st, "SEL %d marked  %s", mc, szb);
+  } else {
+    char kc = (g_sortkey == FS_SORT_NAME) ? 'N'
+            : (g_sortkey == FS_SORT_SIZE) ? 'S' : 'D';
+    if (g_free_ok)
+      siprintf(st, "%lu/%luMB sort:%c%c %d/%d%s",
+               (unsigned long)(g_free >> 20), (unsigned long)(g_total >> 20),
+               kc, g_sortrev ? 'v' : '^', rows ? sel + 1 : 0, rows,
+               g_trunc ? " +" : "");
+    else
+      siprintf(st, "free? sort:%c%c %d/%d%s", kc, g_sortrev ? 'v' : '^',
+               rows ? sel + 1 : 0, rows, g_trunc ? " +" : "");
+  }
   ui_truncate(stt, st, 29);
   ui_text(2, STATUS_Y, UI_OK, stt);
 
-  if (g_clip_op != CLIP_NONE) {
-    char fb[128], nbf[40], ft[128];
-    ui_truncate(nbf, base_name(g_clip_path), 16);
-    siprintf(fb, "[%s] %s  SE:paste", g_clip_op == CLIP_CUT ? "CUT" : "COPY", nbf);
+  if (g_selmode) {
+    ui_text(2, FOOT_Y, UI_OK, "A mark ST all SE batch B exit");
+  } else if (g_clip_op != CLIP_NONE) {
+    char fb[128], ft[128];
+    if (g_clip_count == 1) {
+      char nbf[64]; ui_truncate(nbf, g_clip_buf, 14);
+      siprintf(fb, "[%s] %s  SE:paste", g_clip_op == CLIP_CUT ? "CUT" : "COPY", nbf);
+    } else {
+      siprintf(fb, "[%s] %d items  SE:paste", g_clip_op == CLIP_CUT ? "CUT" : "COPY", g_clip_count);
+    }
     ui_truncate(ft, fb, 29);
     ui_text(2, FOOT_Y, UI_WARN, ft);
   } else {
@@ -403,78 +431,122 @@ static bool do_rename(const FsEntry* e) {
 
 /* Pick a non-colliding sidecar path (dst + ".old~[N]") to hold the existing
  * item during a safe overwrite. Returns false if no free name fits PATH_MAX. */
+/* Reserved temp marker for the overwrite safe-swap. Paste refuses any item
+ * whose name contains it, so a sidecar can never collide with a batch item. */
+#define SIDECAR_MARK ".sdbtmp~"
+static bool is_reserved(const char* name) { return strstr(name, SIDECAR_MARK) != NULL; }
+
 static bool sidecar_name(const char* path, char* out) {
-  if ((unsigned)strlen(path) + 8 >= PATH_MAX) return false;   /* room for ".old~NN" */
+  if ((unsigned)strlen(path) + 12 >= PATH_MAX) return false;  /* room for SIDECAR_MARK + NN */
   FILINFO fno;
   for (int i = 0; i < 20; i++) {
-    if (i == 0) siprintf(out, "%s.old~", path);
-    else        siprintf(out, "%s.old~%d", path, i);
+    if (i == 0) siprintf(out, "%s" SIDECAR_MARK, path);
+    else        siprintf(out, "%s" SIDECAR_MARK "%d", path, i);
     if (f_stat(out, &fno) != FR_OK) return true;              /* this name is free */
   }
   return false;
 }
 
-static void do_copy(const FsEntry* e) {
-  if (path_join(g_cwd, e->name, g_clip_path)) g_clip_op = CLIP_COPY;
+static void clip_reset(ClipOp op) {
+  g_clip_op = op; g_clip_count = 0; g_clip_len = 0; g_clip_buf[0] = 0;
+  strcpy(g_clip_dir, g_cwd);
+}
+static bool clip_add(const char* name) {
+  int nl = (int)strlen(name);
+  if (g_clip_len + nl + 1 > CLIP_BUF) return false;   /* clipboard full */
+  strcpy(g_clip_buf + g_clip_len, name);
+  g_clip_len += nl + 1;
+  g_clip_count++;
+  return true;
+}
+static void clip_clear(void) {
+  g_clip_op = CLIP_NONE; g_clip_count = 0; g_clip_len = 0; g_clip_buf[0] = 0;
 }
 
-static void do_cut(const FsEntry* e) {
-  if (path_join(g_cwd, e->name, g_clip_path)) g_clip_op = CLIP_CUT;
+/* Paste one item src -> dst with the rule-#3 safe swap on overwrite: move any
+ * existing dst aside, paste, then drop the sidecar on success or restore it on
+ * failure — never leaving the user with neither the old nor a complete new. */
+static FRESULT paste_one(const char* src, const char* dst, bool overwrite) {
+  FILINFO fno;
+  bool existed = (f_stat(dst, &fno) == FR_OK);
+  if (existed && !overwrite) return FR_EXIST;
+  if (existed) {
+    char bak[PATH_MAX];
+    if (!sidecar_name(dst, bak)) return FR_NOT_ENOUGH_CORE;
+    FRESULT br = fsop_rename(dst, bak);
+    if (br != FR_OK) return br;
+    FRESULT fr = (g_clip_op == CLIP_CUT) ? fsop_rename(src, dst) : fsop_copy(src, dst);
+    if (fr != FR_OK) {                       /* roll back: drop partial, restore original */
+      FILINFO t; if (f_stat(dst, &t) == FR_OK) fsop_delete(dst);
+      if (fsop_rename(bak, dst) != FR_OK)    /* restore failed: original survives in the sidecar */
+        log_line("RECOVER: original kept at %s", bak);
+      return fr;
+    }
+    fsop_delete(bak);
+    return FR_OK;
+  }
+  return (g_clip_op == CLIP_CUT) ? fsop_rename(src, dst) : fsop_copy(src, dst);
+}
+
+static void do_copy(const FsEntry* e) { clip_reset(CLIP_COPY); clip_add(e->name); }
+static void do_cut(const FsEntry* e)  { clip_reset(CLIP_CUT);  clip_add(e->name); }
+
+/* True if dst is the same as, or nested inside, src (pasting a folder into
+ * itself). The dst[sl]=='/' guard avoids /a matching /ab. */
+static bool into_itself(const char* src, const char* dst) {
+  unsigned sl = (unsigned)strlen(src);
+  if (!strcmp(src, dst)) return true;
+  return (!strncmp(dst, src, sl) && dst[sl] == '/');
 }
 
 static bool do_paste(void) {
-  if (g_clip_op == CLIP_NONE) return false;
-  const char* base = base_name(g_clip_path);
-  char dst[PATH_MAX];
-  if (!path_join(g_cwd, base, dst)) { msg_screen("Path too long", UI_WARN, NULL); return false; }
-
-  if (!strcmp(dst, g_clip_path)) {                  /* same folder */
+  if (g_clip_op == CLIP_NONE || g_clip_count == 0) return false;
+  if (!strcmp(g_clip_dir, g_cwd)) {           /* pasting onto the items themselves */
     msg_screen("Already here", UI_WARN, "Paste into a different folder");
     return false;
   }
-  unsigned sl = (unsigned)strlen(g_clip_path);      /* refuse dst inside src (folder into itself) */
-  if (!strncmp(dst, g_clip_path, sl) && dst[sl] == '/') {
-    msg_screen("Cannot paste", UI_WARN, "destination is inside source");
-    return false;
+
+  /* pass 1: count collisions (skip reserved names + items that would self-paste) */
+  int collisions = 0;
+  for (int i = 0, off = 0; i < g_clip_count; i++) {
+    const char* nm = g_clip_buf + off; off += (int)strlen(nm) + 1;
+    if (is_reserved(nm)) continue;
+    char src[PATH_MAX], dst[PATH_MAX];
+    if (!path_join(g_clip_dir, nm, src) || !path_join(g_cwd, nm, dst)) continue;
+    if (into_itself(src, dst)) continue;
+    FILINFO fno; if (f_stat(dst, &fno) == FR_OK) collisions++;
   }
 
-  FILINFO fno;
-  char bak[PATH_MAX];
-  bool had_existing = (f_stat(dst, &fno) == FR_OK);
-  if (had_existing) {                               /* collision -> confirm overwrite */
-    char l1[48], nb[34];
-    ui_truncate(nb, base, 20);
-    siprintf(l1, "Overwrite %s ?", nb);
-    if (!confirm(l1, "Old kept until new is written")) return false;
-    /* Safe swap (rule #3 — never destroy the original until the replacement is
-     * in place): move the existing item aside first, so a failed paste rolls
-     * back instead of leaving the user with neither the old nor a full new. */
-    if (!sidecar_name(dst, bak)) { msg_screen("Overwrite failed", UI_WARN, "name too long"); return false; }
-    FRESULT br = fsop_rename(dst, bak);
-    if (br != FR_OK) { msg_screen("Overwrite failed", UI_WARN, fr_str(br)); return false; }
+  bool overwrite = false;
+  if (collisions > 0) {                       /* one confirm for the whole batch */
+    char l1[48];
+    siprintf(l1, "%d of %d already exist", collisions, g_clip_count);
+    if (!confirm(l1, "Overwrite them?")) return false;
+    overwrite = true;
   }
 
-  show_msg(g_clip_op == CLIP_CUT ? "Moving..." : "Copying...", base);
-  log_line("paste %s %s -> %s", g_clip_op == CLIP_CUT ? "cut" : "copy", g_clip_path, dst);
-  FRESULT fr = (g_clip_op == CLIP_CUT) ? fsop_rename(g_clip_path, dst)   /* same-volume move */
-                                       : fsop_copy(g_clip_path, dst);
-  log_line("paste -> %d (%s)", fr, fr_str(fr));
-
-  if (fr != FR_OK) {
-    if (had_existing) {                             /* roll back: drop partial, restore original */
-      FILINFO tmp;
-      if (f_stat(dst, &tmp) == FR_OK) fsop_delete(dst);
-      fsop_rename(bak, dst);
-    }
-    log_flush_to_sd(LOG_PATH);
-    msg_screen("Paste failed", UI_WARN, fr_str(fr));
-    return false;
+  show_msg(g_clip_op == CLIP_CUT ? "Moving..." : "Copying...",
+           g_clip_count == 1 ? g_clip_buf : "items");
+  int ok = 0, fail = 0, skip = 0;
+  for (int i = 0, off = 0; i < g_clip_count; i++) {
+    const char* nm = g_clip_buf + off; off += (int)strlen(nm) + 1;
+    if (is_reserved(nm)) { skip++; continue; }   /* reserved sidecar namespace */
+    char src[PATH_MAX], dst[PATH_MAX];
+    if (!path_join(g_clip_dir, nm, src) || !path_join(g_cwd, nm, dst)) { fail++; continue; }
+    if (into_itself(src, dst)) { skip++; continue; }
+    FRESULT fr = paste_one(src, dst, overwrite);
+    log_line("paste %s %s -> %s : %d", g_clip_op == CLIP_CUT ? "cut" : "copy", src, dst, fr);
+    if (fr == FR_OK) ok++; else if (fr == FR_EXIST) skip++; else fail++;
   }
-
-  if (had_existing) fsop_delete(bak);               /* new is in place -> discard the old copy */
   log_flush_to_sd(LOG_PATH);
-  if (g_clip_op == CLIP_CUT) { g_clip_op = CLIP_NONE; g_clip_path[0] = 0; }  /* source consumed */
-  return true;
+
+  if (g_clip_op == CLIP_CUT) clip_clear();   /* source consumed */
+  if (fail || skip) {
+    char m[48];
+    siprintf(m, "%d ok  %d fail  %d skip", ok, fail, skip);
+    msg_screen("Paste finished", UI_WARN, m);
+  }
+  return ok > 0;
 }
 
 static bool do_chmod_toggle(const FsEntry* e, u8 mask) {
@@ -492,9 +564,9 @@ static bool do_chmod_toggle(const FsEntry* e, u8 mask) {
  * rescanned (a mutation succeeded). Write actions appear only on EZ-Flash
  * Omega; on EverDrive the tool stays read-only. `e` is NULL on the [..] row. */
 static bool actions_menu(const FsEntry* e) {
-  enum { A_INFO, A_RENAME, A_COPY, A_CUT, A_PASTE, A_RDO, A_HID, A_DELETE, A_MKDIR };
-  int  ids[10];
-  char labels[10][32];
+  enum { A_INFO, A_RENAME, A_COPY, A_CUT, A_PASTE, A_RDO, A_HID, A_DELETE, A_MKDIR, A_SELECT };
+  int  ids[11];
+  char labels[11][32];
   int  ni = 0;
 
   if (e) { ids[ni] = A_INFO; strcpy(labels[ni++], "Info / properties"); }
@@ -512,7 +584,8 @@ static bool actions_menu(const FsEntry* e) {
       ids[ni] = A_HID; siprintf(labels[ni++], "Hidden: %s",    (e->attrib & AM_HID) ? "ON" : "off");
       ids[ni] = A_DELETE; strcpy(labels[ni++], e->is_dir ? "Delete folder" : "Delete file");
     }
-    ids[ni] = A_MKDIR; strcpy(labels[ni++], "New folder here");
+    ids[ni] = A_SELECT; strcpy(labels[ni++], "Select multiple");
+    ids[ni] = A_MKDIR;  strcpy(labels[ni++], "New folder here");
   }
 
   int sel = 0;
@@ -552,6 +625,7 @@ static bool actions_menu(const FsEntry* e) {
         case A_HID:    if (do_chmod_toggle(e, AM_HID)) return true; break;
         case A_DELETE: if (do_delete(e))               return true; break;
         case A_MKDIR:  if (do_mkdir())                 return true; break;
+        case A_SELECT: g_selmode = true; memset(g_marked, 0, sizeof(g_marked)); return false;
       }
       dirty = true;
     }
@@ -664,6 +738,86 @@ static void file_viewer(const char* path, const char* name, uint64_t size) {
 
 /* ---- main loop ---------------------------------------------------------- */
 
+/* ---- multi-select batch operations ------------------------------------- */
+
+static int marked_count(void) {
+  int c = 0;
+  for (int i = 0; i < g_n; i++) if (g_marked[i]) c++;
+  return c;
+}
+
+static int capture_marked(ClipOp op) {
+  clip_reset(op);
+  for (int i = 0; i < g_n; i++)
+    if (g_marked[i] && !clip_add(g_entries[i].name)) break;   /* stop if clipboard fills */
+  return g_clip_count;
+}
+
+static bool do_delete_marked(int count) {
+  char l1[40];
+  siprintf(l1, "Delete %d items?", count);
+  if (!confirm(l1, "Folders include all contents")) return false;
+  show_msg("Deleting...", "marked items");
+  int ok = 0, fail = 0;
+  for (int i = 0; i < g_n; i++) {
+    if (!g_marked[i]) continue;
+    char p[PATH_MAX];
+    if (!path_join(g_cwd, g_entries[i].name, p)) { fail++; continue; }
+    FRESULT fr = fsop_delete(p);
+    log_line("batch delete %s : %d", p, fr);
+    if (fr == FR_OK) ok++; else fail++;
+  }
+  log_flush_to_sd(LOG_PATH);
+  if (fail) { char m[48]; siprintf(m, "%d ok  %d failed", ok, fail); msg_screen("Delete finished", UI_WARN, m); }
+  return ok > 0;
+}
+
+/* Batch-actions menu for the marked set (selection mode, Omega-only). Returns
+ * true if the listing changed. Copy/Cut capture the marked items to the
+ * clipboard and leave selection mode so the user can navigate + paste. */
+static bool batch_menu(int count) {
+  char labels[4][24];
+  int  ids[4], ni = 0;
+  siprintf(labels[ni], "Copy %d", count);   ids[ni++] = 0;
+  siprintf(labels[ni], "Cut %d", count);    ids[ni++] = 1;
+  siprintf(labels[ni], "Delete %d", count); ids[ni++] = 2;
+  strcpy(labels[ni], "Cancel");             ids[ni++] = 3;
+
+  int sel = 0;
+  bool dirty = true;
+  while (1) {
+    if (dirty) {
+      ui_clear();
+      ui_text(2, HDR_Y, UI_TITLE, "BATCH ACTIONS");
+      ui_panel(0, 12, 240, 78, UI_PANEL, UI_BORDER);
+      for (int i = 0; i < ni; i++) ui_text_sel(4, 18 + i * 12, 232, i == sel, UI_TEXT, labels[i]);
+      ui_text(2, FOOT_Y, UI_DIM, "A do   B back");
+      dirty = false;
+    }
+    vsync();
+    u16 mv = key_repeat(KEY_UP | KEY_DOWN);
+    u16 hit = key_hit(KEY_A | KEY_B);
+    if (!mv && !hit) continue;
+    dirty = true;
+    if (hit & KEY_B) return false;
+    else if (mv & KEY_DOWN) sel = (sel + 1) % ni;
+    else if (mv & KEY_UP)   sel = (sel == 0) ? ni - 1 : sel - 1;
+    else if (hit & KEY_A) {
+      switch (ids[sel]) {
+        case 0:
+        case 1: {
+          int cap = capture_marked(ids[sel] == 0 ? CLIP_COPY : CLIP_CUT);
+          if (cap < count) msg_screen("Clipboard full", UI_WARN, "Not all items captured");
+          g_selmode = false;
+          return false;                       /* navigate, then Paste */
+        }
+        case 2: { bool r = do_delete_marked(count); g_selmode = false; return r; }
+        case 3: return false;
+      }
+    }
+  }
+}
+
 static void run_browser(void) {
   int sel = 0, top = 0;
   bool dirty = true;
@@ -692,6 +846,24 @@ static void run_browser(void) {
     else if (hit & KEY_RIGHT) { sel = rows ? rows - 1 : 0; }
     else if (hit & KEY_L)     { sel -= LIST_ROWS; if (sel < 0) sel = 0; }
     else if (hit & KEY_R)     { sel += LIST_ROWS; if (sel >= rows) sel = rows ? rows - 1 : 0; }
+    else if (g_selmode) {
+      /* selection mode: A marks the highlighted entry, START marks all/none,
+       * SELECT opens batch actions, B leaves selection mode. */
+      if (hit & KEY_A) {
+        FsEntry* e = br_entry(sel);
+        if (e) { int idx = (int)(e - g_entries); g_marked[idx] = !g_marked[idx]; }
+      } else if (hit & KEY_START) {
+        bool none = (marked_count() == 0);
+        for (int i = 0; i < g_n; i++) g_marked[i] = none;   /* none -> all, else clear */
+      } else if (hit & KEY_SELECT) {
+        int mc = marked_count();
+        if (mc == 0) msg_screen("No items marked", UI_DIM, "A marks the highlighted item");
+        else if (batch_menu(mc)) { rescan(); sel = 0; top = 0; }
+      } else if (hit & KEY_B) {
+        g_selmode = false;
+        memset(g_marked, 0, sizeof(g_marked));
+      }
+    }
     else if (hit & KEY_START) {
       /* cycle the 6 sort states: Name/Size/Date x ascending/descending */
       int s = ((int)g_sortkey * 2 + (g_sortrev ? 1 : 0) + 1) % 6;
