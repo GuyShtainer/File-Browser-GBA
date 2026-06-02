@@ -28,11 +28,16 @@ read-only):
 - **Properties** screen showing the **full name (wrapped)**, type, size, modified
   date/time, and attributes
 
-**Phase 2 (in progress)** — **Rename / move** (`f_rename`, Omega-only) via the actions
-menu, using the keyboard pre-filled with the current name. Next: copy / cut / paste
-(incl. folders) and multi-select — see the ROADMAP.
+**Phase 2 (in progress, Omega-only)** — via the actions menu:
+- **Rename / move** (`f_rename`), keyboard pre-filled with the current name
+- **Copy / Cut / Paste** with a clipboard: Copy or Cut an entry, navigate to a
+  destination folder, then **Paste here**. Files and **whole folders** copy
+  recursively; Cut is a same-volume move. Pasting onto an existing item asks to
+  overwrite; pasting a folder into its own subtree is refused. A footer
+  indicator shows what's on the clipboard (`[COPY]`/`[CUT]`).
 
-Every write is confirmed and logged to `sdbrowse_log.txt`.
+Next: multi-select + batch operations — see the ROADMAP. Every write is confirmed
+and logged to `sdbrowse_log.txt`.
 
 ## Controls
 
@@ -44,7 +49,7 @@ Every write is confirmed and logged to `sdbrowse_log.txt`.
 | A | Open folder · (on a file) open the Hex/Text viewer |
 | B | Up one folder |
 | START | Cycle sort: Name → Size → Date, each `^` ascending / `v` descending (6 states) |
-| SELECT | Open the **actions menu** for the highlighted entry (Info, and on Omega: rename / attributes / delete / new folder) |
+| SELECT | Open the **actions menu** (Info, and on Omega: rename / copy / cut / paste here / attributes / delete / new folder) |
 
 ### On-screen keyboard (QWERTY)
 
