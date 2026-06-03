@@ -418,3 +418,36 @@ B40 keyboard auto-repeat · B41 START opens the menu + View lives in it.
 - [ ] "View" opens the hex/text viewer; after a hex-edit+save the listing refreshes (date), after
       a pure view it does not. "View" is absent on folders/`[..]`.
 - [ ] PASS / FAIL / NOTES: ______________________________
+
+---
+
+# Phase 6 — file-type viewers (dispatcher · word-wrap text · BMP)
+
+UI/read-only viewers (no SD write, no RTC, no destructive op). New items **B42–B44**;
+all confirm on either cart / mGBA. (Future P6d/e metadata + P6f image codecs are not
+built yet.)
+
+B42 open-by-extension dispatch · B43 BMP image viewer · B44 word-wrapped text.
+
+## (P6-1) Open-by-extension dispatch  → B42
+- [ ] On a `.bmp` file the actions menu shows an **"Open" row** (labelled "View image")
+      ABOVE "View (hex/text)"; on a non-registered type only "View (hex/text)" appears.
+- [ ] "View (hex/text)" is ALWAYS present for files (the universal fallback). Folders show no View/Open.
+- [ ] PASS / FAIL / NOTES: ______________________________
+
+## (P6-2) BMP image viewer — both carts  → B43
+- [ ] Stage BMP files on the card: a 24-bit, an 8-bit palettized, and (if easy) a 16-bit and a
+      32-bit — at sizes both ≤240×160 and larger (to exercise downscale). "View image" on each:
+      the picture renders centered, correct colors, correctly oriented (not upside-down), with a
+      "name WxH B=back" footer. **B** returns to the browser (image cleared).
+- [ ] A NON-BMP renamed to `.bmp`, a truncated BMP, and an RLE-compressed BMP each show a clear
+      message ("Not a BMP" / "Compressed BMP" / "Unsupported"/"too wide") and never hang/garble.
+- [ ] Confirm it works on **EverDrive** too (read-only path).
+- [ ] PASS / FAIL / NOTES: ______________________________
+
+## (P6-3) Word-wrapped text viewer  → B44
+- [ ] Open a `.txt`/`.c`/`.md` with long lines, tabs, and CRLF line endings (View → toggle to
+      Text with A): lines wrap at word boundaries (not mid-word), tabs align to 4-col stops, no
+      stray `.` for CR, and paragraph breaks render. High/UTF-8 bytes show as `.` (ASCII font).
+- [ ] L/R page + UP/DOWN scroll still work (note: a page boundary may split a line — expected).
+- [ ] PASS / FAIL / NOTES: ______________________________

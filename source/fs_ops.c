@@ -433,6 +433,28 @@ int fsop_find(const char* root, const char* keyword,
   return found;
 }
 
+/* ---- extension helpers (open-by-type dispatch) ------------------------- */
+
+const char* fsop_ext(const char* name) {
+  const char* base = name;
+  for (const char* p = name; *p; p++) if (*p == '/') base = p + 1;  /* basename */
+  const char* dot = 0;
+  for (const char* p = base; *p; p++) if (*p == '.') dot = p;       /* final dot */
+  if (!dot || dot == base) return "";   /* no dot, or leading-dot dotfile -> no ext */
+  return dot + 1;                        /* "" when the name ends in '.' (FAT-illegal anyway) */
+}
+
+bool fsop_ext_is(const char* name, const char* ext) {
+  const char* e = fsop_ext(name);
+  for (;; e++, ext++) {
+    char a = *e, b = *ext;
+    if (a >= 'A' && a <= 'Z') a = (char)(a + 32);
+    if (b >= 'A' && b <= 'Z') b = (char)(b + 32);
+    if (a != b) return false;
+    if (!a) return true;
+  }
+}
+
 /* ---- hex-editor verified write ----------------------------------------- */
 
 static uint8_t FS_EWRAM s_cmpbuf[4096] __attribute__((aligned(4)));   /* verify pass */

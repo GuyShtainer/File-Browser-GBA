@@ -67,6 +67,15 @@ int fsop_find(const char* root, const char* keyword,
               char out_paths[][FS_PATH_CAP], uint8_t* out_isdir,
               int max, bool* truncated);
 
+/* Return a pointer into `name` just past the final '.', or "" when there is no
+ * extension (no dot, a leading-dot dotfile, or a trailing dot). Re-derives the
+ * basename internally, so a full path is fine. Never writes `name`. */
+const char* fsop_ext(const char* name);
+
+/* True if `name`'s extension equals `ext` (ASCII case-insensitive). `ext` has no
+ * leading dot (e.g. "bmp"). */
+bool fsop_ext_is(const char* name, const char* ext);
+
 /* ---- mutating ops (Phase 1) — callers gate these on EZ-Flash Omega ------ */
 
 /* Create a directory. Returns FR_OK, FR_EXIST, etc. */

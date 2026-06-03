@@ -109,6 +109,25 @@ menu (always present on **both** carts):
 The actions menu now **scrolls** (▲/▼ indicators) when it holds more items than
 fit on screen, so nothing spills past the box.
 
+**File-type viewers (Phase 6)** — the actions menu routes a file to a viewer by
+its extension, with **View (hex/text)** always available as the fallback:
+
+- **Open by type** — a small extension→viewer registry. A recognized type adds an
+  "Open" row above "View"; everything else just uses the hex/text viewer.
+- **Image viewer (BMP)** — "View image" on a `.bmp` decodes it to the screen,
+  integer-downscaled to fit 240×160 (uncompressed 8/16/24/32-bit). Read-only,
+  both carts. **B** returns.
+- **Word-wrapped text** — the text viewer now wraps at word boundaries, expands
+  tabs, skips CR, and handles line breaks (the font is ASCII; high bytes show as
+  `.`).
+
+> **Honest scope:** real **MP3/AAC playback, MP4/H.264 video, and PDF rendering
+> are not feasible** on the GBA's 16.78 MHz CPU (+ the OS-mode SD constraint).
+> The roadmap adds *metadata/info* views (ID3 tags, MP4 codec/resolution, PDF page
+> count) and more image formats (PNG/GIF/JPEG) — see
+> [`../../docs/ROADMAP.md`](../../docs/ROADMAP.md) §A Phase 6. We never pretend to
+> play/render what the hardware can't.
+
 ## Controls
 
 | Key | Action |
@@ -116,7 +135,7 @@ fit on screen, so nothing spills past the box.
 | UP / DOWN | Move cursor (hold to repeat) |
 | LEFT / RIGHT | Jump up / down by the configured distance (default 11 rows) |
 | L / R | Page up / page down (one screen) |
-| A | **Folder:** open it · **File:** open the **actions menu** (View / Info / **Find…**; **Settings…** and **Reboot to loader…** always; and on Omega: rename / copy / cut / duplicate / paste here / attributes / delete / new file / new folder / select multiple) |
+| A | **Folder:** open it · **File:** open the **actions menu** (a type-specific **Open** e.g. *View image* for `.bmp` / **View** hex-text / Info / **Find…**; **Settings…** and **Reboot to loader…** always; and on Omega: rename / copy / cut / duplicate / paste here / attributes / delete / new file / new folder / select multiple) |
 | START | **Any item:** open the **actions menu** (the same menu A opens on a file — **View** lives inside it; this is also how you reach Settings/Reboot/Find when nothing is selected) |
 | B | Up one folder |
 | SELECT | Cycle the sort: 6 states across Name / Size / Date, each ascending and descending. The status bar spells out the active one — "Name A-Z", "Name Z-A", "Size small-big", "Size big-small", "Date old-new", "Date new-old". Folders always sort before files. |

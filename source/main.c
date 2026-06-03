@@ -816,6 +816,23 @@ static void do_reboot(void) {
 /* Defined below; the actions menu's "View" item opens it. Returns true if the
  * file was modified (a hex save), so the caller can refresh the listing. */
 static bool file_viewer(const char* path, const char* name, uint64_t size);
+static bool view_image(const char* path, const char* name, uint64_t size);
+
+/* Open-by-extension dispatch: a registry mapping a file extension to a viewer.
+ * The DEFAULT/fallback is always the universal hex/text file_viewer (an entry is
+ * listed here only when a real handler exists), so "View (hex/text)" is always
+ * available and Open never dispatches to a stub. New type = one view_* function
+ * + one row here. Handlers share file_viewer's (path,name,size)->modified shape. */
+typedef bool (*OpenHandler)(const char* path, const char* name, uint64_t size);
+typedef struct { const char* ext; OpenHandler fn; const char* label; } OpenEntry;
+static const OpenEntry g_openers[] = {
+  { "bmp", view_image, "View image" },
+};
+static const OpenEntry* opener_for(const char* name) {
+  for (unsigned i = 0; i < sizeof(g_openers) / sizeof(g_openers[0]); i++)
+    if (fsop_ext_is(name, g_openers[i].ext)) return &g_openers[i];
+  return 0;
+}
 
 /* Recursive keyword search from the current directory. Prompts for a keyword,
  * walks the subtree (read-only, both carts), then shows a scrollable list of
@@ -899,14 +916,18 @@ static bool find_modal(void) {
  * [..] row. Find / Settings / Reboot are always present (both carts), so they
  * are reachable even on an empty directory / the [..] row. */
 static bool actions_menu(const FsEntry* e) {
-  enum { A_VIEW, A_INFO, A_FOLDERSIZE, A_FIND, A_RENAME, A_COPY, A_CUT, A_DUPLICATE,
+  enum { A_OPEN, A_VIEW, A_INFO, A_FOLDERSIZE, A_FIND, A_RENAME, A_COPY, A_CUT, A_DUPLICATE,
          A_PASTE, A_RDO, A_HID, A_DELETE, A_NEWFILE, A_MKDIR, A_SELECT, A_SETTINGS, A_REBOOT };
-  int  ids[18];
-  char labels[18][32];
+  int  ids[20];
+  char labels[20][32];
   int  ni = 0;
 
   if (e) {
-    if (!e->is_dir) { ids[ni] = A_VIEW; strcpy(labels[ni++], "View (hex/text)"); }  /* both carts */
+    if (!e->is_dir) {
+      const OpenEntry* op = opener_for(e->name);          /* type-specific viewer, if any */
+      if (op) { ids[ni] = A_OPEN; strcpy(labels[ni++], op->label); }
+      ids[ni] = A_VIEW; strcpy(labels[ni++], "View (hex/text)");
+    }
     ids[ni] = A_INFO; strcpy(labels[ni++], "Info / properties");
     if (e->is_dir) { ids[ni] = A_FOLDERSIZE; strcpy(labels[ni++], "Folder size"); }
   }
@@ -934,8 +955,8 @@ static bool actions_menu(const FsEntry* e) {
   ids[ni] = A_SETTINGS; strcpy(labels[ni++], "Settings...");
   ids[ni] = A_REBOOT;   strcpy(labels[ni++], "Reboot to loader...");
 
-  /* The list can hold up to 16 items but the panel fits 9; scroll a sel/top
-   * window like the browser list so rows never spill past the box. */
+  /* The list can hold up to 17 items (ids[20] cap) but the panel fits 9; scroll
+   * a sel/top window like the browser list so rows never spill past the box. */
   const int VIS = 9, ROW0 = 18, PITCH = 12;
   int sel = 0, top = 0;
   bool dirty = true;
@@ -977,6 +998,13 @@ static bool actions_menu(const FsEntry* e) {
     else if (mv & KEY_UP)   { if (ni) sel = (sel == 0) ? ni - 1 : sel - 1; }
     else if ((hit & KEY_A) && ni) {
       switch (ids[sel]) {
+        case A_OPEN: {     /* type-specific viewer (e.g. image) via the registry */
+          const OpenEntry* op = opener_for(e->name);
+          char np[PATH_MAX];
+          if (op && path_join(g_cwd, e->name, np)) return op->fn(np, e->name, e->size);
+          msg_screen("Path too long", UI_WARN, NULL);
+          break;
+        }
         case A_VIEW: {     /* open the hex/text viewer (read-only unless hex-edited) */
           char np[PATH_MAX];
           if (path_join(g_cwd, e->name, np)) return file_viewer(np, e->name, e->size);
@@ -1042,6 +1070,36 @@ static bool edit_set(uint32_t off, uint8_t val, uint8_t base) {
   return false;                                /* HEX_EDIT_MAX reached */
 }
 
+/* Word-wrapped text layout for the viewer's TEXT mode: flows `got` bytes into up
+ * to VIEW_ROWS lines of <= TXT_COLS columns, breaking at LF (CR skipped), tabs
+ * expanded to 4-col stops, non-printable -> '.', wrapping long lines at the last
+ * space (else hard char-wrap). The font is ASCII-only (sys8), so high bytes show
+ * as '.'. Navigation stays byte-offset based, so a page boundary may split a
+ * line — acceptable for a reader. */
+#define TXT_COLS 29
+static void render_text_wrapped(const uint8_t* buf, uint32_t got) {
+  char line[TXT_COLS + 1];
+  int lc = 0, row = 0;
+  for (uint32_t i = 0; i < got && row < VIEW_ROWS; ) {
+    uint8_t ch = buf[i++];
+    if (ch == '\r') continue;
+    if (ch == '\n') { line[lc] = 0; ui_text(2, 10 + row * 8, UI_TEXT, line); row++; lc = 0; continue; }
+    if (ch == '\t') { int adv = 4 - (lc % 4); while (adv-- > 0 && lc < TXT_COLS) line[lc++] = ' '; }
+    else            { line[lc++] = (ch >= 0x20 && ch <= 0x7E) ? (char)ch : '.'; }
+    if (lc >= TXT_COLS) {                          /* wrap: prefer the last space */
+      int sp = -1;
+      for (int k = lc - 1; k > 0; k--) if (line[k] == ' ') { sp = k; break; }
+      int br = (sp > 0) ? sp : lc;                 /* break column (drop the space) */
+      char carry[TXT_COLS + 1]; int cc = 0;
+      for (int k = (sp > 0 ? sp + 1 : br); k < lc; k++) carry[cc++] = line[k];
+      line[br] = 0; ui_text(2, 10 + row * 8, UI_TEXT, line); row++;
+      lc = 0;
+      for (int k = 0; k < cc && lc < TXT_COLS; k++) line[lc++] = carry[k];
+    }
+  }
+  if (row < VIEW_ROWS && lc > 0) { line[lc] = 0; ui_text(2, 10 + row * 8, UI_TEXT, line); }
+}
+
 static void render_view(const char* name, uint64_t size, uint64_t off,
                         const uint8_t* buf, uint32_t got, bool hex) {
   ui_clear();
@@ -1051,39 +1109,29 @@ static void render_view(const char* name, uint64_t size, uint64_t off,
   ui_truncate(line, hbuf, 29);
   ui_text(2, HDR_Y, g_editing ? UI_WARN : UI_TITLE, line);
 
-  int bpr = hex ? HEX_BPR : TXT_BPR;
   if (got == 0) {
     ui_text(8, 12, UI_DIM, "(empty file)");
+  } else if (!hex) {
+    render_text_wrapped(buf, got);                        /* word-wrapped text mode */
   } else {
     for (int r = 0; r < VIEW_ROWS; r++) {
-      uint32_t ro = (uint32_t)(r * bpr);
+      uint32_t ro = (uint32_t)(r * HEX_BPR);
       if (ro >= got) break;
       int y = 10 + r * 8;
-      if (hex) {
-        char ofs[12];
-        siprintf(ofs, "%05lX:", (unsigned long)(off + ro));
-        ui_text(2, y, UI_DIM, ofs);                       /* offset label */
-        for (int i = 0; i < HEX_BPR && ro + (uint32_t)i < got; i++) {
-          uint32_t a = (uint32_t)(off + ro + i);
-          uint8_t  b = edit_get(a, buf[ro + i]);
-          char hh[3]; siprintf(hh, "%02X", b);
-          int bx = 50 + i * 23;
-          if (g_editing && a == g_ecur) {                 /* editable byte: inverse video (theme-aware) */
-            m3_rect(bx, y, bx + 16, y + UI_ROW_H, UI_TEXT);
-            ui_text(bx, y, UI_BG, hh);
-          } else {
-            ui_text(bx, y, edit_find(a) >= 0 ? UI_WARN : UI_SAVECLR, hh);
-          }
+      char ofs[12];
+      siprintf(ofs, "%05lX:", (unsigned long)(off + ro));
+      ui_text(2, y, UI_DIM, ofs);                         /* offset label */
+      for (int i = 0; i < HEX_BPR && ro + (uint32_t)i < got; i++) {
+        uint32_t a = (uint32_t)(off + ro + i);
+        uint8_t  b = edit_get(a, buf[ro + i]);
+        char hh[3]; siprintf(hh, "%02X", b);
+        int bx = 50 + i * 23;
+        if (g_editing && a == g_ecur) {                   /* editable byte: inverse video (theme-aware) */
+          m3_rect(bx, y, bx + 16, y + UI_ROW_H, UI_TEXT);
+          ui_text(bx, y, UI_BG, hh);
+        } else {
+          ui_text(bx, y, edit_find(a) >= 0 ? UI_WARN : UI_SAVECLR, hh);
         }
-      } else {
-        char t[TXT_BPR + 1];
-        int c = 0;
-        for (; c < bpr && ro + (uint32_t)c < got; c++) {
-          uint8_t ch = buf[ro + c];
-          t[c] = (ch >= 0x20 && ch <= 0x7E) ? (char)ch : '.';
-        }
-        t[c] = 0;
-        ui_text(2, y, UI_TEXT, t);
       }
     }
   }
@@ -1250,6 +1298,115 @@ static bool file_viewer(const char* path, const char* name, uint64_t size) {
   g_editing = false; g_nedits = 0;
   ui_set_repeat_mask(saved_mask);            /* restore the caller's repeat mask */
   return modified;
+}
+
+/* ---- BMP image viewer -------------------------------------------------- */
+
+static u8  EWRAM_BSS g_imgrow[8192];   /* one BMP source row (padded)        */
+static u16 EWRAM_BSS g_imgpal[256];    /* 8-bit BMP palette -> BGR555        */
+
+static u32 rd_u32le(const u8* p) { return (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16) | ((u32)p[3] << 24); }
+static u16 rd_u16le(const u8* p) { return (u16)(p[0] | (p[1] << 8)); }
+
+static void img_msg(const char* l1, const char* l2) {
+  ui_clear();
+  ui_text(6, 60, UI_WARN, l1);
+  if (l2) ui_text(6, 78, UI_DIM, l2);
+  ui_text(6, 110, UI_DIM, "B = back");
+  wait_keys(KEY_B);
+}
+
+/* View a BMP image: uncompressed 8/16/24/32-bit, blitted to the Mode-3 canvas
+ * with integer-decimation downscale to fit 240x160 (centered). Read-only — runs
+ * on both carts; returns false (no listing change). Every header field is bounds
+ * checked (untrusted SD file). Rows are read into EWRAM BEFORE blitting, so no
+ * VRAM write happens during an SD transfer. */
+static bool view_image(const char* path, const char* name, uint64_t size) {
+  (void)size;
+  FIL f;
+  if (f_open(&f, path, FA_READ) != FR_OK) { img_msg("Open failed", NULL); return false; }
+
+  u8 hdr[54];
+  UINT br = 0;
+  if (f_read(&f, hdr, 54, &br) != FR_OK || br < 54 || hdr[0] != 'B' || hdr[1] != 'M') {
+    f_close(&f); img_msg("Not a BMP", NULL); return false;
+  }
+  u32 dataoff = rd_u32le(hdr + 10);
+  u32 biSize  = rd_u32le(hdr + 14);
+  int wImg    = (int)rd_u32le(hdr + 18);
+  int hRaw    = (int)rd_u32le(hdr + 22);     /* signed: negative = top-down */
+  u16 bpp     = rd_u16le(hdr + 28);
+  u32 comp    = rd_u32le(hdr + 30);
+  bool topdown = (hRaw < 0);
+  int hImg = topdown ? (int)(0u - (u32)hRaw) : hRaw;   /* negate in u32 (INT_MIN-safe) */
+
+  /* We parse v3 BITMAPINFOHEADER (40-byte) fixed offsets; reject older/core
+   * headers (e.g. OS/2 12-byte) rather than misread them as garbage dims. */
+  if (biSize < 40)                                 { f_close(&f); img_msg("Unsupported BMP", "old/core header"); return false; }
+  if (wImg <= 0 || hImg <= 0 || wImg > 16384 || hImg > 16384) { f_close(&f); img_msg("Bad BMP size", NULL); return false; }
+  if (dataoff >= f_size(&f))                       { f_close(&f); img_msg("Bad BMP", "bad data offset"); return false; }
+  if (comp != 0)                                   { f_close(&f); img_msg("Compressed BMP", "RLE not supported"); return false; }
+  if (bpp != 8 && bpp != 16 && bpp != 24 && bpp != 32) { f_close(&f); img_msg("Unsupported BMP", "need 8/16/24/32-bit"); return false; }
+
+  u32 stride = (((u32)wImg * bpp + 31) / 32) * 4;
+  if (stride > sizeof(g_imgrow)) { f_close(&f); img_msg("Image too wide", NULL); return false; }
+
+  if (bpp == 8) {                                  /* load the palette -> BGR555 */
+    static u8 EWRAM_BSS palraw[1024];
+    u32 paloff = 14 + biSize;
+    u32 ncol = rd_u32le(hdr + 46);                 /* biClrUsed (0 => 256) */
+    if (ncol == 0 || ncol > 256) ncol = 256;
+    if (f_lseek(&f, paloff) != FR_OK || f_read(&f, palraw, ncol * 4, &br) != FR_OK || br < ncol * 4) {
+      f_close(&f); img_msg("Palette read failed", NULL); return false;
+    }
+    for (u32 i = 0; i < 256; i++) {
+      if (i < ncol) {
+        u8 B = palraw[i*4], G = palraw[i*4+1], R = palraw[i*4+2];
+        g_imgpal[i] = (u16)((R >> 3) | ((G >> 3) << 5) | ((B >> 3) << 10));
+      } else g_imgpal[i] = 0;
+    }
+  }
+
+  int scale = 1;
+  while (wImg / scale > 240 || hImg / scale > 160) scale++;   /* integer decimation */
+  int ow = wImg / scale, oh = hImg / scale;
+  if (ow < 1) ow = 1;
+  if (oh < 1) oh = 1;
+  int ox0 = (240 - ow) / 2, oy0 = (160 - oh) / 2;
+
+  ui_clear();
+  for (int oy = 0; oy < oh; oy++) {
+    int imgRow  = oy * scale;                       /* row from the top of the image */
+    int fileRow = topdown ? imgRow : (hImg - 1 - imgRow);
+    if (f_lseek(&f, dataoff + (u32)fileRow * stride) != FR_OK) break;
+    if (f_read(&f, g_imgrow, stride, &br) != FR_OK || br < stride) break;
+    u16* dst = &vid_mem[(oy0 + oy) * 240 + ox0];
+    for (int ox = 0; ox < ow; ox++) {
+      int sx = ox * scale;
+      u16 c;
+      if (bpp == 8) {
+        c = g_imgpal[g_imgrow[sx]];
+      } else if (bpp == 16) {                        /* X1R5G5B5 -> GBA BGR555 */
+        u16 px = rd_u16le(g_imgrow + sx * 2);
+        c = (u16)(((px >> 10) & 31) | (((px >> 5) & 31) << 5) | ((px & 31) << 10));
+      } else {                                       /* 24 or 32-bit: BGR(A) */
+        int bypp = (bpp == 24) ? 3 : 4;
+        const u8* p = g_imgrow + sx * bypp;
+        c = (u16)((p[2] >> 3) | ((p[1] >> 3) << 5) | ((p[0] >> 3) << 10));
+      }
+      dst[ox] = c;
+    }
+  }
+  f_close(&f);
+
+  char nb[128], ft[160], ftt[160];
+  ui_truncate(nb, name, 14);
+  siprintf(ft, "%s  %dx%d  B=back", nb, wImg, hImg);
+  ui_truncate(ftt, ft, 29);
+  m3_rect(0, 151, 240, 160, UI_BG);                  /* clear a strip so the footer reads */
+  ui_text(2, 152, UI_DIM, ftt);
+  wait_keys(KEY_B);
+  return false;
 }
 
 /* ---- main loop ---------------------------------------------------------- */
