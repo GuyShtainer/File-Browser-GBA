@@ -1,19 +1,21 @@
 /*
  * SD File Browser (sd-browser) — a GBA-native microSD file manager.
  *
- * Phase 0 (this build): read-only browser. Runs on BOTH EZ-Flash Omega DE and
- * EverDrive GBA X5 (read works on both). Navigate folders, sort the listing,
- * see free space, and inspect file properties. No writes, no text entry yet —
- * those arrive in Phase 1 (on-screen keyboard + mkdir/delete/attrs, Omega-only).
+ * Runs on BOTH EZ-Flash Omega DE and EverDrive GBA X5 (read works on both).
+ * Browse/sort, inspect properties, view+hex-edit files; write ops (rename, copy/
+ * cut/paste, duplicate, delete, mkdir, new file, attrs, swap-names, hex save) are
+ * EZ-Flash-Omega-only and gated on can_write(). Settings + themes persist to
+ * /sdbrowse.cfg (saved Omega-only, read on both).
  *
- * Keys:
+ * Browser keys:
  *   UP/DOWN  move (auto-repeat on hold)
- *   LEFT     jump to top of listing      RIGHT  jump to bottom
- *   L        page up                     R      page down
- *   A        open folder / file properties
+ *   LEFT/RIGHT  jump by the configured distance (default 11 rows)
+ *   L/R      page up / page down
+ *   A        open folder / [..] up / open the actions menu on a file
  *   B        up one folder
- *   START    cycle sort key (Name -> Size -> Date)
- *   SELECT   toggle sort direction (^ ascending / v descending)
+ *   START    open the actions menu (file / folder / [..]) — View lives inside it
+ *   SELECT   cycle the 6 sort states (Name/Size/Date x asc/desc)
+ *   (selection mode: A mark · SELECT mark-all · START batch menu · B exit)
  *
  * Reuses the toolkit's shared layer: flashcartio (cart detect + sector I/O),
  * FatFs (lib/fatfs), the cartridge RTC (file timestamps), the triple logger
@@ -31,8 +33,10 @@
 #include "ui.h"
 #include "fs_ops.h"
 #include "osk.h"
+#include "cfg.h"
 
 #define LOG_PATH  "/sdbrowse_log.txt"
+#define CFG_PATH  "/sdbrowse.cfg"
 #define FS_MAX    256
 #define PATH_MAX  256
 
@@ -74,6 +78,18 @@ static int                g_clip_count = 0;       /* number of names            
 static bool     EWRAM_BSS g_marked[FS_MAX];
 static bool               g_selmode = false;
 
+/* Recursive keyword-search results (full paths + a dir flag), filled by the
+ * Find action. g_find_sel holds the entry name to re-select after a find
+ * navigates the browser into the match's folder ("" = none). */
+#define FIND_MAX 128
+static char     EWRAM_BSS g_find_paths[FIND_MAX][PATH_MAX];
+static u8       EWRAM_BSS g_find_isdir[FIND_MAX];
+static int                g_find_count = 0;
+static bool               g_find_trunc = false;
+static char     EWRAM_BSS g_find_sel[FS_NAME_CAP];
+/* g_find_paths' row stride must equal fsop_find()'s out_paths[][FS_PATH_CAP]. */
+_Static_assert(PATH_MAX == FS_PATH_CAP, "find path row stride mismatch");
+
 /* ---- frame tick + input ------------------------------------------------- */
 
 static void vsync(void) { VBlankIntrWait(); key_poll(); }
@@ -98,6 +114,8 @@ static void halt_msg(const char* msg) {
   ui_text(6, 76, UI_TEXT, msg);
   while (1) vsync();
 }
+
+static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 /* ---- path helpers ------------------------------------------------------- */
 
@@ -126,6 +144,16 @@ static void path_up(void) {
   int i = l - 1;
   while (i > 0 && g_cwd[i] != '/') i--;
   if (i == 0) g_cwd[1] = 0; else g_cwd[i] = 0;
+}
+
+/* Containing directory of `path` into `out` (root "/" if path is a top-level
+ * entry). out must hold PATH_MAX bytes. */
+static void parent_of(const char* path, char* out) {
+  int l = 0; for (; path[l] && l < PATH_MAX - 1; l++) out[l] = path[l];
+  out[l] = 0;
+  int i = l - 1;
+  while (i > 0 && out[i] != '/') i--;
+  if (i <= 0) { out[0] = '/'; out[1] = 0; } else out[i] = 0;
 }
 
 /* ---- DOS date/time + formatting ---------------------------------------- */
@@ -192,9 +220,10 @@ static FsEntry* br_entry(int row) {
 static void rescan(void) {
   show_msg("Reading...", g_cwd);
   memset(g_marked, 0, sizeof(g_marked));    /* marks are per-directory */
-  int r = fsop_list(g_cwd, g_entries, FS_MAX, &g_trunc);
+  int r = fsop_list(g_cwd, g_entries, FS_MAX, &g_trunc, g_set.show_hidden);
   g_n = (r < 0) ? 0 : r;
   if (r < 0) log_line("opendir %s failed", g_cwd);
+  else strcpy(g_set.last_dir, g_cwd);       /* remember for next launch */
   fsop_sort(g_entries, g_n, g_sortkey, g_sortrev);
   uint64_t f = 0, t = 0;
   g_free_ok = (fsop_freespace(g_cwd, &f, &t) == FR_OK);
@@ -206,12 +235,34 @@ static void rescan(void) {
 
 /* Spelled-out description of the active sort key + direction, shown on the
  * status bar. Folders always sort before files regardless of this. */
-static const char* sort_label(void) {
-  switch (g_sortkey) {
-    case FS_SORT_SIZE: return g_sortrev ? "Size big-small" : "Size small-big";
-    case FS_SORT_DATE: return g_sortrev ? "Date new-old"   : "Date old-new";
+static const char* sort_label_of(int key, bool rev) {
+  switch (key) {
+    case FS_SORT_SIZE: return rev ? "Size big-small" : "Size small-big";
+    case FS_SORT_DATE: return rev ? "Date new-old"   : "Date old-new";
     case FS_SORT_NAME:
-    default:           return g_sortrev ? "Name Z-A"       : "Name A-Z";
+    default:           return rev ? "Name Z-A"       : "Name A-Z";
+  }
+}
+static const char* sort_label(void) { return sort_label_of((int)g_sortkey, g_sortrev); }
+
+static const char* free_unit_name(int u) {
+  switch (u) {
+    case FREE_B:  return "Bytes";
+    case FREE_KB: return "KB";
+    case FREE_GB: return "GB";
+    case FREE_MB:
+    default:      return "MB";
+  }
+}
+
+/* Free space formatted in the user's chosen unit (no decimals — status bar). */
+static void fmt_free(uint64_t b, char* out) {
+  switch (g_set.free_unit) {
+    case FREE_B:  siprintf(out, "%luB",  (unsigned long)b);          break;
+    case FREE_KB: siprintf(out, "%luKB", (unsigned long)(b >> 10));  break;
+    case FREE_GB: siprintf(out, "%luGB", (unsigned long)(b >> 30));  break;
+    case FREE_MB:
+    default:      siprintf(out, "%luMB", (unsigned long)(b >> 20));  break;
   }
 }
 
@@ -281,19 +332,21 @@ static void render_browser(int sel, int top) {
     char szb[16]; human_size(msz, szb);
     siprintf(st, "SEL %d marked  %s", mc, szb);
   } else {
-    /* elaborate sort label + scroll position + free space */
-    if (g_free_ok)
-      siprintf(st, "%s %d/%d %luMB%s", sort_label(), rows ? sel + 1 : 0, rows,
-               (unsigned long)(g_free >> 20), g_trunc ? " +" : "");
-    else
+    /* elaborate sort label + scroll position + free space (chosen unit) */
+    if (g_free_ok) {
+      char fb[16]; fmt_free(g_free, fb);
+      siprintf(st, "%s %d/%d %s%s", sort_label(), rows ? sel + 1 : 0, rows,
+               fb, g_trunc ? " +" : "");
+    } else {
       siprintf(st, "%s %d/%d%s", sort_label(), rows ? sel + 1 : 0, rows,
                g_trunc ? " +" : "");
+    }
   }
   ui_truncate(stt, st, 29);
   ui_text(2, STATUS_Y, UI_OK, stt);
 
   if (g_selmode) {
-    ui_text(2, FOOT_Y, UI_OK, "A mark ST all SE batch B exit");
+    ui_text(2, FOOT_Y, UI_OK, "A mark SE all ST batch B exit");
   } else if (g_clip_op != CLIP_NONE) {
     char fb[128], ft[128];
     if (g_clip_count == 1) {
@@ -304,8 +357,10 @@ static void render_browser(int sel, int top) {
     }
     ui_truncate(ft, fb, 29);
     ui_text(2, FOOT_Y, UI_WARN, ft);
+  } else if (rows == 0) {
+    ui_text(2, FOOT_Y, UI_DIM, "Empty folder   ST = menu");
   } else {
-    ui_text(2, FOOT_Y, UI_DIM, "A open B up SE view ST:sort");
+    ui_text(2, FOOT_Y, UI_DIM, "A open B up ST menu SE:sort");
   }
 }
 
@@ -412,9 +467,11 @@ static bool do_delete(const FsEntry* e) {
   /* nb/l1 hold a UTF-8 name truncated to N cols -> up to ~4N bytes; size for the worst case. */
   char np[PATH_MAX], l1[128], nb[128];
   if (!path_join(g_cwd, e->name, np)) { msg_screen("Path too long", UI_WARN, NULL); return false; }
-  ui_truncate(nb, e->name, 22);
-  siprintf(l1, "Delete %s ?", nb);
-  if (!confirm(l1, e->is_dir ? "FOLDER + ALL its contents!" : NULL)) return false;
+  if (g_set.confirm_delete) {
+    ui_truncate(nb, e->name, 22);
+    siprintf(l1, "Delete %s ?", nb);
+    if (!confirm(l1, e->is_dir ? "FOLDER + ALL its contents!" : NULL)) return false;
+  }
   show_msg("Deleting...", e->name);
   log_line("delete %s (dir=%d)", np, e->is_dir);
   FRESULT fr = fsop_delete(np);
@@ -569,21 +626,297 @@ static bool do_chmod_toggle(const FsEntry* e, u8 mask) {
   return true;
 }
 
-/* Per-entry action menu (SELECT). Returns true if the listing must be
- * rescanned (a mutation succeeded). Write actions appear only on EZ-Flash
- * Omega; on EverDrive the tool stays read-only. `e` is NULL on the [..] row. */
+/* Create a new empty file in the current folder (Omega-only). FA_CREATE_NEW
+ * fails FR_EXIST rather than clobbering an existing file. */
+static bool do_newfile(void) {
+  char name[128], np[PATH_MAX];
+  if (!osk_input("New file name:", NULL, name, sizeof(name))) return false;
+  if (!path_join(g_cwd, name, np)) { msg_screen("Path too long", UI_WARN, NULL); return false; }
+  FIL f;
+  FRESULT fr = f_open(&f, np, FA_CREATE_NEW | FA_WRITE);
+  if (fr == FR_OK) fr = f_close(&f);
+  log_line("newfile %s -> %d (%s)", np, fr, fr_str(fr));
+  log_flush_to_sd(LOG_PATH);
+  if (fr != FR_OK) { msg_screen("Create failed", UI_WARN, fr_str(fr)); return false; }
+  return true;
+}
+
+/* Build a non-colliding sibling name "<base> (copy[ N]).<ext>" for `name` in
+ * `dir`, written as a full path into `out`. For a folder or an extension-less
+ * file the suffix is appended. Returns false if no free name fits PATH_MAX. */
+static bool duplicate_path(const char* dir, const char* name, bool is_dir, char* out) {
+  const char* dot = is_dir ? NULL : strrchr(name, '.');   /* folders have no extension */
+  int blen = (dot && dot != name) ? (int)(dot - name) : (int)strlen(name);
+  const char* ext = (dot && dot != name) ? dot : "";     /* includes the '.' */
+  char base[FS_NAME_CAP];
+  if (blen > (int)sizeof(base) - 1) blen = (int)sizeof(base) - 1;
+  memcpy(base, name, (size_t)blen); base[blen] = 0;
+
+  char cand[FS_NAME_CAP];
+  FILINFO fno;
+  for (int i = 1; i <= 99; i++) {
+    if (i == 1) sniprintf(cand, sizeof(cand), "%s (copy)%s", base, ext);
+    else        sniprintf(cand, sizeof(cand), "%s (copy %d)%s", base, i, ext);
+    if (!path_join(dir, cand, out)) return false;          /* too long */
+    if (f_stat(out, &fno) != FR_OK) return true;           /* this name is free */
+  }
+  return false;
+}
+
+/* Duplicate the selected file/folder in place under an auto-suffixed sibling
+ * name (Omega-only). Folders duplicate recursively via fsop_copy. */
+static bool do_duplicate(const FsEntry* e) {
+  char src[PATH_MAX], dst[PATH_MAX];
+  if (!path_join(g_cwd, e->name, src)) { msg_screen("Path too long", UI_WARN, NULL); return false; }
+  if (!duplicate_path(g_cwd, e->name, e->is_dir, dst)) { msg_screen("Cannot name copy", UI_WARN, "too long / too many"); return false; }
+  show_msg("Duplicating...", e->name);
+  log_line("duplicate %s -> %s", src, dst);
+  FRESULT fr = fsop_copy(src, dst);
+  log_line("duplicate -> %d (%s)", fr, fr_str(fr));
+  log_flush_to_sd(LOG_PATH);
+  if (fr != FR_OK) { msg_screen("Duplicate failed", UI_WARN, fr_str(fr)); return false; }
+  return true;
+}
+
+/* Recursively total a folder's bytes + file/subfolder counts and show them.
+ * Read-only — works on both carts. Returns false (no listing change). */
+static bool do_foldersize(const FsEntry* e) {
+  char np[PATH_MAX];
+  if (!path_join(g_cwd, e->name, np)) { msg_screen("Path too long", UI_WARN, NULL); return false; }
+  show_msg("Computing size...", e->name);
+  uint64_t bytes = 0; uint32_t files = 0, dirs = 0;
+  FRESULT fr = fsop_dirsize(np, &bytes, &files, &dirs);
+  if (fr != FR_OK) { msg_screen("Size failed", UI_WARN, fr_str(fr)); return false; }
+
+  char szb[24], l1[64], l2[64], nb[128];
+  human_size(bytes, szb);
+  if (bytes >> 32) siprintf(l1, "%s", szb);
+  else             siprintf(l1, "%s  (%lu bytes)", szb, (unsigned long)bytes);
+  siprintf(l2, "%lu files, %lu folders", (unsigned long)files, (unsigned long)dirs);
+  ui_clear();
+  ui_text(6, 40, UI_TITLE, "FOLDER SIZE");
+  ui_truncate(nb, e->name, 28);
+  ui_text(6, 58, UI_DIM, nb);
+  ui_text(6, 78, UI_OK, l1);
+  ui_text(6, 92, UI_TEXT, l2);
+  ui_text(6, 120, UI_DIM, "B = back");
+  wait_keys(KEY_B);
+  return false;
+}
+
+/* ---- settings menu + reboot (both carts) ------------------------------- */
+
+/* Modal settings editor: UP/DOWN pick a row, LEFT/RIGHT change its value (the
+ * theme previews live). A (or START) saves + closes; B cancels and reverts
+ * every change (including the live theme preview) — matching the app's B=back
+ * idiom. On save, changes are pushed to the live globals and persisted to
+ * CFG_PATH (Omega-only). Returns true if the listing must be re-read (sort or
+ * show-hidden changed); false means a plain repaint suffices. */
+static bool settings_menu(void) {
+  enum { S_THEME, S_SORT, S_HIDDEN, S_CONFDEL, S_VIEWER,
+         S_JUMP, S_KDELAY, S_KSPEED, S_FREE, S_RESET, S_COUNT };
+  Settings snap = g_set;             /* snapshot for B = cancel/revert */
+  u16 saved_mask = ui_get_repeat_mask();
+  ui_set_repeat_mask(KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT);
+  int sel = 0;
+  bool dirty = true, save = false;
+  while (1) {
+    if (dirty) {
+      ui_clear();
+      ui_text(2, HDR_Y, UI_TITLE, "SETTINGS");
+      ui_panel(0, 12, 240, 126, UI_PANEL, UI_BORDER);
+      char row[64];
+      for (int i = 0; i < S_COUNT; i++) {
+        switch (i) {
+          case S_THEME:   siprintf(row, "Theme:        %s", theme_name(g_set.theme)); break;
+          case S_SORT:    siprintf(row, "Sort:         %s", sort_label_of(g_set.sort_key, g_set.sort_rev)); break;
+          case S_HIDDEN:  siprintf(row, "Show hidden:  %s", g_set.show_hidden ? "ON" : "off"); break;
+          case S_CONFDEL: siprintf(row, "Confirm del:  %s", g_set.confirm_delete ? "ON" : "off"); break;
+          case S_VIEWER:  siprintf(row, "Open files:   %s", g_set.viewer_hex ? "Hex" : "Text"); break;
+          case S_JUMP:    siprintf(row, "L/R jump:     %d rows", g_set.jump); break;
+          case S_KDELAY:  siprintf(row, "Key delay:    %d frames", g_set.key_delay); break;
+          case S_KSPEED:  siprintf(row, "Key repeat:   %d frames", g_set.key_speed); break;
+          case S_FREE:    siprintf(row, "Free space:   %s", free_unit_name(g_set.free_unit)); break;
+          case S_RESET:   siprintf(row, "Reset to defaults   (L/R)"); break;
+        }
+        ui_text_sel(4, 16 + i * 12, 232, i == sel, UI_TEXT, row);
+      }
+      ui_text(2, FOOT_Y, UI_DIM, "UD pick LR chg A save B back");
+      dirty = false;
+    }
+    vsync();
+    /* key_repeat mutates an internal counter, so call it once/frame and mask.
+     * Numeric rows (jump / key timings) auto-repeat on a held L/R; the theme,
+     * sort and on/off toggles step once per press so they don't whip past the
+     * target value. */
+    bool numeric = (sel == S_JUMP || sel == S_KDELAY || sel == S_KSPEED);
+    u16 rep = key_repeat(KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT);
+    u16 hit = key_hit(KEY_A | KEY_B | KEY_START | KEY_LEFT | KEY_RIGHT);
+    u16 nav = rep & (KEY_UP | KEY_DOWN);
+    u16 chg = numeric ? (rep & (KEY_LEFT | KEY_RIGHT)) : (hit & (KEY_LEFT | KEY_RIGHT));
+    if (!nav && !hit && !chg) continue;
+    dirty = true;
+    if (hit & (KEY_A | KEY_START)) { save = true;  break; }   /* save + close   */
+    else if (hit & KEY_B)          { save = false; break; }   /* cancel + revert */
+    else if (nav & KEY_DOWN) sel = (sel + 1) % S_COUNT;
+    else if (nav & KEY_UP)   sel = (sel == 0) ? S_COUNT - 1 : sel - 1;
+    else if (chg) {
+      int d = (chg & KEY_RIGHT) ? 1 : -1;
+      switch (sel) {
+        case S_THEME:   g_set.theme = (g_set.theme + THEME_COUNT + d) % THEME_COUNT;
+                        theme_apply(g_set.theme); break;          /* live preview */
+        case S_SORT: {  int s = (g_set.sort_key * 2 + (g_set.sort_rev ? 1 : 0) + 6 + d) % 6;
+                        g_set.sort_key = s / 2; g_set.sort_rev = (s & 1) != 0; break; }
+        case S_HIDDEN:  g_set.show_hidden    = !g_set.show_hidden;    break;
+        case S_CONFDEL: g_set.confirm_delete = !g_set.confirm_delete; break;
+        case S_VIEWER:  g_set.viewer_hex     = !g_set.viewer_hex;     break;
+        case S_JUMP:    g_set.jump      = clampi(g_set.jump + d, 1, 99);    break;
+        case S_KDELAY:  g_set.key_delay = clampi(g_set.key_delay + d, 2, 60); break;
+        case S_KSPEED:  g_set.key_speed = clampi(g_set.key_speed + d, 1, 30); break;
+        case S_FREE:    g_set.free_unit = (g_set.free_unit + FREE_UNIT_COUNT + d) % FREE_UNIT_COUNT; break;
+        case S_RESET: { char keep[256]; strcpy(keep, g_set.last_dir);   /* reset prefs, keep last folder */
+                        cfg_defaults(); strcpy(g_set.last_dir, keep);
+                        theme_apply(g_set.theme); break; }              /* B still cancels/reverts */
+      }
+    }
+  }
+  ui_set_repeat_mask(saved_mask);                /* restore the caller's mask */
+
+  if (!save) {                       /* cancel: revert everything incl. the theme */
+    g_set = snap;
+    theme_apply(g_set.theme);
+    return false;
+  }
+  /* save: push to the live browser globals, persist (write is Omega-only), and
+   * report whether a re-list is needed (sort/hidden changed) vs repaint-only. */
+  bool need_rescan = (snap.show_hidden != g_set.show_hidden) ||
+                     (snap.sort_key   != g_set.sort_key) ||
+                     (snap.sort_rev   != g_set.sort_rev);
+  g_sortkey = (FsSortKey)g_set.sort_key;
+  g_sortrev = g_set.sort_rev;
+  key_repeat_limits(g_set.key_delay, g_set.key_speed);
+  if (can_write()) cfg_save(CFG_PATH);
+  return need_rescan;
+}
+
+/* Reboot toward the flashcart loader/menu. Experimental: may land on the menu
+ * or just restart the tool (see flashcartio_reboot). No data risk — invoked
+ * only while idle and the tool keeps no unsaved SRAM. Persists settings first
+ * so a successful reboot keeps the last folder + preferences. Does not return
+ * on success. */
+static void do_reboot(void) {
+  if (!confirm("Reboot to loader?", "Experimental - may just restart")) return;
+  strcpy(g_set.last_dir, g_cwd);
+  if (can_write()) cfg_save(CFG_PATH);
+  show_msg("Rebooting...", NULL);
+  VBlankIntrWait();                 /* let the message paint before we tear down */
+  flashcartio_reboot();             /* no return on a real flashcart */
+}
+
+/* Defined below; the actions menu's "View" item opens it. Returns true if the
+ * file was modified (a hex save), so the caller can refresh the listing. */
+static bool file_viewer(const char* path, const char* name, uint64_t size);
+
+/* Recursive keyword search from the current directory. Prompts for a keyword,
+ * walks the subtree (read-only, both carts), then shows a scrollable list of
+ * matches. Picking one navigates the browser to the match's folder and selects
+ * it (via g_find_sel). Returns true if it navigated (caller rescans), false on
+ * cancel / no input / no matches. */
+static bool find_modal(void) {
+  char kw[64];
+  if (!osk_input("Find (name has):", NULL, kw, sizeof(kw))) return false;
+  if (!kw[0]) return false;
+
+  show_msg("Searching...", g_cwd);
+  int n = fsop_find(g_cwd, kw, g_find_paths, g_find_isdir, FIND_MAX, &g_find_trunc);
+  if (n < 0) {                                  /* f_opendir(g_cwd) failed: I/O error, not empty */
+    log_line("find '%s' in %s: open failed", kw, g_cwd);
+    log_flush_to_sd(LOG_PATH);
+    msg_screen("Search failed", UI_WARN, g_cwd);
+    return false;
+  }
+  g_find_count = n;
+  log_line("find '%s' in %s: %d%s", kw, g_cwd, g_find_count, g_find_trunc ? " (capped)" : "");
+  log_flush_to_sd(LOG_PATH);
+  if (g_find_count == 0) { msg_screen("No matches", UI_DIM, kw); return false; }
+
+  int sel = 0, top = 0;
+  bool dirty = true;
+  while (1) {
+    if (sel >= g_find_count) sel = g_find_count - 1;
+    if (sel < 0) sel = 0;
+    if (sel < top) top = sel;
+    if (sel >= top + LIST_ROWS) top = sel - LIST_ROWS + 1;
+    if (top > g_find_count - LIST_ROWS) top = g_find_count - LIST_ROWS;
+    if (top < 0) top = 0;
+
+    if (dirty) {
+      ui_clear();
+      char hdr[128], kn[128];
+      ui_truncate(kn, kw, 14);
+      siprintf(hdr, "Find '%s'  %d%s", kn, g_find_count, g_find_trunc ? "+" : "");
+      ui_truncate(hdr, hdr, 29);
+      ui_text(2, HDR_Y, UI_TITLE, hdr);
+      ui_panel(0, BOX_Y, 240, BOX_H, UI_PANEL, UI_BORDER);
+      for (int r = 0; r < LIST_ROWS; r++) {
+        int idx = top + r;
+        if (idx >= g_find_count) break;
+        char row[140], nm[128];
+        ui_truncate(nm, base_name(g_find_paths[idx]), g_find_isdir[idx] ? 27 : 28);
+        if (g_find_isdir[idx]) siprintf(row, "%s/", nm); else siprintf(row, "%s", nm);
+        ui_text_sel(3, ROW0_Y + r * ROW_H, 234, idx == sel,
+                    g_find_isdir[idx] ? UI_DIRCLR : UI_SAVECLR, row);
+      }
+      if (top > 0)                        ui_text(232, ROW0_Y, UI_DIM, "^");
+      if (top + LIST_ROWS < g_find_count) ui_text(232, ROW0_Y + (LIST_ROWS - 1) * ROW_H, UI_DIM, "v");
+      char fp[128];
+      ui_truncate(fp, g_find_paths[sel], 29);
+      ui_text(2, DETAIL_NAME_Y, UI_SELTEXT, fp);          /* full path of the selection */
+      ui_text(2, FOOT_Y, UI_DIM, "A go to  B back");
+      dirty = false;
+    }
+    vsync();
+    u16 mv  = key_repeat(KEY_UP | KEY_DOWN);
+    u16 hit = key_hit(KEY_A | KEY_B | KEY_START);
+    if (!mv && !hit) continue;
+    dirty = true;
+    if (hit & KEY_B) return false;
+    else if (mv & KEY_DOWN) sel = (sel + 1) % g_find_count;
+    else if (mv & KEY_UP)   sel = (sel == 0) ? g_find_count - 1 : sel - 1;
+    else if (hit & (KEY_A | KEY_START)) {
+      char parent[PATH_MAX];
+      parent_of(g_find_paths[sel], parent);
+      strcpy(g_cwd, parent);
+      strcpy(g_find_sel, base_name(g_find_paths[sel]));
+      return true;                                        /* navigated */
+    }
+  }
+}
+
+/* Per-entry action menu. Returns true if the listing must be rescanned (a
+ * mutation succeeded, or a find navigated). Write actions appear only on
+ * EZ-Flash Omega; on EverDrive the tool stays read-only. `e` is NULL on the
+ * [..] row. Find / Settings / Reboot are always present (both carts), so they
+ * are reachable even on an empty directory / the [..] row. */
 static bool actions_menu(const FsEntry* e) {
-  enum { A_INFO, A_RENAME, A_COPY, A_CUT, A_PASTE, A_RDO, A_HID, A_DELETE, A_MKDIR, A_SELECT };
-  int  ids[11];
-  char labels[11][32];
+  enum { A_VIEW, A_INFO, A_FOLDERSIZE, A_FIND, A_RENAME, A_COPY, A_CUT, A_DUPLICATE,
+         A_PASTE, A_RDO, A_HID, A_DELETE, A_NEWFILE, A_MKDIR, A_SELECT, A_SETTINGS, A_REBOOT };
+  int  ids[18];
+  char labels[18][32];
   int  ni = 0;
 
-  if (e) { ids[ni] = A_INFO; strcpy(labels[ni++], "Info / properties"); }
+  if (e) {
+    if (!e->is_dir) { ids[ni] = A_VIEW; strcpy(labels[ni++], "View (hex/text)"); }  /* both carts */
+    ids[ni] = A_INFO; strcpy(labels[ni++], "Info / properties");
+    if (e->is_dir) { ids[ni] = A_FOLDERSIZE; strcpy(labels[ni++], "Folder size"); }
+  }
+  ids[ni] = A_FIND; strcpy(labels[ni++], "Find...");   /* recursive search, both carts */
   if (can_write()) {
     if (e) {
-      ids[ni] = A_RENAME; strcpy(labels[ni++], "Rename");
-      ids[ni] = A_COPY;   strcpy(labels[ni++], "Copy");
-      ids[ni] = A_CUT;    strcpy(labels[ni++], "Cut");
+      ids[ni] = A_RENAME;    strcpy(labels[ni++], "Rename");
+      ids[ni] = A_COPY;      strcpy(labels[ni++], "Copy");
+      ids[ni] = A_CUT;       strcpy(labels[ni++], "Cut");
+      ids[ni] = A_DUPLICATE; strcpy(labels[ni++], "Duplicate");
     }
     if (g_clip_op != CLIP_NONE) {
       ids[ni] = A_PASTE; siprintf(labels[ni++], "Paste %s here", g_clip_op == CLIP_CUT ? "(move)" : "(copy)");
@@ -593,13 +926,27 @@ static bool actions_menu(const FsEntry* e) {
       ids[ni] = A_HID; siprintf(labels[ni++], "Hidden: %s",    (e->attrib & AM_HID) ? "ON" : "off");
       ids[ni] = A_DELETE; strcpy(labels[ni++], e->is_dir ? "Delete folder" : "Delete file");
     }
-    ids[ni] = A_SELECT; strcpy(labels[ni++], "Select multiple");
-    ids[ni] = A_MKDIR;  strcpy(labels[ni++], "New folder here");
+    ids[ni] = A_NEWFILE; strcpy(labels[ni++], "New file here");
+    ids[ni] = A_MKDIR;   strcpy(labels[ni++], "New folder here");
+    ids[ni] = A_SELECT;  strcpy(labels[ni++], "Select multiple");
   }
+  /* always available, both carts (settings persist Omega-only) */
+  ids[ni] = A_SETTINGS; strcpy(labels[ni++], "Settings...");
+  ids[ni] = A_REBOOT;   strcpy(labels[ni++], "Reboot to loader...");
 
-  int sel = 0;
+  /* The list can hold up to 16 items but the panel fits 9; scroll a sel/top
+   * window like the browser list so rows never spill past the box. */
+  const int VIS = 9, ROW0 = 18, PITCH = 12;
+  int sel = 0, top = 0;
   bool dirty = true;
   while (1) {
+    if (ni == 0) sel = 0; else if (sel >= ni) sel = ni - 1;
+    if (sel < 0) sel = 0;
+    if (sel < top) top = sel;
+    if (sel >= top + VIS) top = sel - VIS + 1;
+    if (top > ni - VIS) top = ni - VIS;
+    if (top < 0) top = 0;
+
     if (dirty) {
       ui_clear();
       char hb[128], nb[128], hh[128];   /* UTF-8 name -> ~4 bytes/col; size for worst case */
@@ -608,10 +955,15 @@ static bool actions_menu(const FsEntry* e) {
       ui_truncate(hh, hb, 29);
       ui_text(2, HDR_Y, UI_TITLE, hh);
       ui_panel(0, 12, 240, 118, UI_PANEL, UI_BORDER);
-      for (int i = 0; i < ni; i++)
-        ui_text_sel(4, 18 + i * 12, 232, i == sel, UI_TEXT, labels[i]);
-      if (!can_write())
-        ui_text(4, 18 + ni * 12 + 6, UI_DIM, "Writes need EZ-Flash Omega");
+      for (int r = 0; r < VIS; r++) {
+        int idx = top + r;
+        if (idx >= ni) break;
+        ui_text_sel(4, ROW0 + r * PITCH, 232, idx == sel, UI_TEXT, labels[idx]);
+      }
+      if (top > 0)         ui_text(230, ROW0, UI_DIM, "^");                       /* more above */
+      if (top + VIS < ni)  ui_text(230, ROW0 + (VIS - 1) * PITCH, UI_DIM, "v");   /* more below */
+      if (!can_write() && ni <= VIS)
+        ui_text(4, ROW0 + ni * PITCH + 6, UI_DIM, "Writes need EZ-Flash Omega");
       ui_text(2, FOOT_Y, UI_DIM, "A do   B back");
       dirty = false;
     }
@@ -625,16 +977,28 @@ static bool actions_menu(const FsEntry* e) {
     else if (mv & KEY_UP)   { if (ni) sel = (sel == 0) ? ni - 1 : sel - 1; }
     else if ((hit & KEY_A) && ni) {
       switch (ids[sel]) {
-        case A_INFO:   properties_screen(e);                 break;
-        case A_RENAME: if (do_rename(e))               return true; break;
-        case A_COPY:   do_copy(e);                     return false;  /* set clipboard, show indicator */
-        case A_CUT:    do_cut(e);                      return false;
-        case A_PASTE:  if (do_paste())                 return true; break;
-        case A_RDO:    if (do_chmod_toggle(e, AM_RDO)) return true; break;
-        case A_HID:    if (do_chmod_toggle(e, AM_HID)) return true; break;
-        case A_DELETE: if (do_delete(e))               return true; break;
-        case A_MKDIR:  if (do_mkdir())                 return true; break;
-        case A_SELECT: g_selmode = true; memset(g_marked, 0, sizeof(g_marked)); return false;
+        case A_VIEW: {     /* open the hex/text viewer (read-only unless hex-edited) */
+          char np[PATH_MAX];
+          if (path_join(g_cwd, e->name, np)) return file_viewer(np, e->name, e->size);
+          msg_screen("Path too long", UI_WARN, NULL);
+          break;
+        }
+        case A_INFO:       properties_screen(e);              break;
+        case A_FOLDERSIZE: do_foldersize(e);                  break;
+        case A_FIND:       return find_modal();  /* navigated -> true; cancel -> false */
+        case A_RENAME:     if (do_rename(e))            return true; break;
+        case A_COPY:       do_copy(e);                  return false;  /* set clipboard, show indicator */
+        case A_CUT:        do_cut(e);                   return false;
+        case A_DUPLICATE:  if (do_duplicate(e))         return true; break;
+        case A_PASTE:      if (do_paste())              return true; break;
+        case A_RDO:        if (do_chmod_toggle(e, AM_RDO)) return true; break;
+        case A_HID:        if (do_chmod_toggle(e, AM_HID)) return true; break;
+        case A_DELETE:     if (do_delete(e))            return true; break;
+        case A_NEWFILE:    if (do_newfile())            return true; break;
+        case A_MKDIR:      if (do_mkdir())              return true; break;
+        case A_SELECT:     g_selmode = true; memset(g_marked, 0, sizeof(g_marked)); return false;
+        case A_SETTINGS:   return settings_menu();  /* true only if sort/hidden changed */
+        case A_REBOOT:     do_reboot();     break;  /* returns only if cancelled */
       }
       dirty = true;
     }
@@ -704,9 +1068,9 @@ static void render_view(const char* name, uint64_t size, uint64_t off,
           uint8_t  b = edit_get(a, buf[ro + i]);
           char hh[3]; siprintf(hh, "%02X", b);
           int bx = 50 + i * 23;
-          if (g_editing && a == g_ecur) {                 /* the editable byte: white box */
-            m3_rect(bx, y, bx + 16, y + UI_ROW_H, RGB15(31, 31, 31));
-            ui_text(bx, y, RGB15(0, 0, 0), hh);
+          if (g_editing && a == g_ecur) {                 /* editable byte: inverse video (theme-aware) */
+            m3_rect(bx, y, bx + 16, y + UI_ROW_H, UI_TEXT);
+            ui_text(bx, y, UI_BG, hh);
           } else {
             ui_text(bx, y, edit_find(a) >= 0 ? UI_WARN : UI_SAVECLR, hh);
           }
@@ -737,28 +1101,47 @@ static void render_view(const char* name, uint64_t size, uint64_t off,
     siprintf(st, "off %lu/%lu  %lu%%", (unsigned long)off, (unsigned long)size, pct);
     ui_truncate(stt, st, 29);
     ui_text(2, STATUS_Y, UI_OK, stt);
-    ui_text(2, FOOT_Y, UI_DIM, "A hex/txt  L/R page  ST edit  B back");
+    ui_text(2, FOOT_Y, UI_DIM, "A hex/txt  ST edit  SE goto");
   }
+}
+
+/* Parse a hex string (optional 0x prefix) into a 64-bit value, stopping at the
+ * first non-hex char. Used by the viewer's "go to offset". */
+static uint64_t parse_hex64(const char* s) {
+  while (*s == ' ' || *s == '\t') s++;
+  if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) s += 2;
+  uint64_t v = 0;
+  for (; *s; s++) {
+    char c = *s; int d;
+    if (c >= '0' && c <= '9') d = c - '0';
+    else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+    else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+    else break;
+    v = (v << 4) | (uint64_t)d;
+  }
+  return v;
 }
 
 /* Page-windowed viewer: keeps a byte offset and re-reads one screen worth of
  * bytes on each move (f_lseek + f_read into an EWRAM buffer), so it handles
  * files far larger than RAM. Reads happen BEFORE render() — never mid-transfer
  * with the ROM unmapped. */
-static void file_viewer(const char* path, const char* name, uint64_t size) {
+static bool file_viewer(const char* path, const char* name, uint64_t size) {
   FIL f;
   if (f_open(&f, path, FA_READ) != FR_OK) {
     show_msg("Open failed", base_name(path));
     ui_text(6, 100, UI_DIM, "B = back");
     wait_keys(KEY_B);
-    return;
+    return false;
   }
 
   /* Let the d-pad + shoulders auto-repeat while in the viewer (paging and, in
-   * edit mode, cursor/value changes); restored to the browser's mask on exit. */
-  key_repeat_mask(KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT | KEY_L | KEY_R);
+   * edit mode, cursor/value changes); restored to the caller's mask on exit. */
+  u16 saved_mask = ui_get_repeat_mask();
+  ui_set_repeat_mask(KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT | KEY_L | KEY_R);
 
-  bool hex = true, quit = false, fopen = true;
+  bool hex = g_set.viewer_hex, quit = false, fopen = true;   /* default view per settings */
+  bool modified = false;                                     /* a hex save succeeded */
   uint64_t off = 0;
   uint32_t got = 0;
   bool dirty = true;
@@ -799,6 +1182,14 @@ static void file_viewer(const char* path, const char* name, uint64_t size) {
       else if (mv & KEY_L)      { off = (off >= page) ? off - page : 0; }
       else if (mv & KEY_LEFT)   { off = 0; }
       else if (mv & KEY_RIGHT)  { off = (size > 0) ? (size - 1) : 0; }
+      else if (hit & KEY_SELECT) {                             /* jump to a hex offset */
+        char in[20];
+        if (size > 0 && osk_input("Go to offset (hex):", NULL, in, sizeof(in))) {
+          uint64_t t = parse_hex64(in);
+          if (t > size - 1) t = size - 1;
+          off = (t / (uint32_t)bpr) * (uint32_t)bpr;           /* align to a row */
+        }
+      }
       else if (hit & KEY_START) {                              /* enter EDIT mode */
         if (!can_write()) msg_screen("Read-only", UI_WARN, "Editing needs EZ-Flash Omega");
         else if (size == 0) msg_screen("Empty file", UI_DIM, "Nothing to edit");
@@ -835,7 +1226,7 @@ static void file_viewer(const char* path, const char* name, uint64_t size) {
           log_line("hexedit %s (%d edits) -> %d (%s)", path, g_nedits, fr, fr_str(fr));
           log_flush_to_sd(LOG_PATH);
           if (fr == FR_OK) {
-            g_nedits = 0; g_editing = false;
+            g_nedits = 0; g_editing = false; modified = true;
             msg_screen("Saved", UI_OK, "Original kept as .bak~");
           } else {
             FILINFO chk;                        /* rare: original gone -> point at recovery files */
@@ -857,7 +1248,8 @@ static void file_viewer(const char* path, const char* name, uint64_t size) {
 
   if (fopen) f_close(&f);
   g_editing = false; g_nedits = 0;
-  key_repeat_mask(KEY_UP | KEY_DOWN);        /* restore the browser's repeat mask */
+  ui_set_repeat_mask(saved_mask);            /* restore the caller's repeat mask */
+  return modified;
 }
 
 /* ---- main loop ---------------------------------------------------------- */
@@ -878,9 +1270,11 @@ static int capture_marked(ClipOp op) {
 }
 
 static bool do_delete_marked(int count) {
-  char l1[40];
-  siprintf(l1, "Delete %d items?", count);
-  if (!confirm(l1, "Folders include all contents")) return false;
+  if (g_set.confirm_delete) {
+    char l1[40];
+    siprintf(l1, "Delete %d items?", count);
+    if (!confirm(l1, "Folders include all contents")) return false;
+  }
   show_msg("Deleting...", "marked items");
   int ok = 0, fail = 0;
   for (int i = 0; i < g_n; i++) {
@@ -896,16 +1290,56 @@ static bool do_delete_marked(int count) {
   return ok > 0;
 }
 
+/* Swap the names of exactly two marked siblings via a 3-way rename through a
+ * reserved temp: A -> tmp, B -> A, tmp -> B (rolls back on any failure so the
+ * pair is never left half-renamed). Selection mode is Omega-only, so this is
+ * too. Returns true on success. */
+static bool do_swap_names(void) {
+  const char *na = NULL, *nb = NULL;
+  for (int i = 0; i < g_n; i++) {
+    if (!g_marked[i]) continue;
+    if      (!na) na = g_entries[i].name;
+    else if (!nb) nb = g_entries[i].name;
+    else return false;                         /* more than two marked */
+  }
+  if (!na || !nb) return false;
+
+  char pa[PATH_MAX], pb[PATH_MAX], tmp[PATH_MAX];
+  if (!path_join(g_cwd, na, pa) || !path_join(g_cwd, nb, pb)) {
+    msg_screen("Path too long", UI_WARN, NULL); return false;
+  }
+  if (!sidecar_name(pa, tmp)) { msg_screen("Swap failed", UI_WARN, "no free temp name"); return false; }
+
+  show_msg("Swapping names...", NULL);
+  FRESULT fr = fsop_rename(pa, tmp);             /* A -> tmp */
+  if (fr == FR_OK) {
+    fr = fsop_rename(pb, pa);                    /* B -> A */
+    if (fr == FR_OK) {
+      fr = fsop_rename(tmp, pb);                 /* tmp(old A) -> B */
+      if (fr != FR_OK) { fsop_rename(pa, pb); fsop_rename(tmp, pa); }  /* undo B->A, tmp->A */
+    } else {
+      fsop_rename(tmp, pa);                      /* undo A->tmp */
+    }
+  }
+  log_line("swapnames %s <-> %s : %d (%s)", pa, pb, fr, fr_str(fr));
+  log_flush_to_sd(LOG_PATH);
+  if (fr != FR_OK) { msg_screen("Swap failed", UI_WARN, fr_str(fr)); return false; }
+  return true;
+}
+
 /* Batch-actions menu for the marked set (selection mode, Omega-only). Returns
  * true if the listing changed. Copy/Cut capture the marked items to the
- * clipboard and leave selection mode so the user can navigate + paste. */
+ * clipboard and leave selection mode so the user can navigate + paste. "Swap
+ * names" appears only when exactly two items are marked. */
 static bool batch_menu(int count) {
-  char labels[4][24];
-  int  ids[4], ni = 0;
-  siprintf(labels[ni], "Copy %d", count);   ids[ni++] = 0;
-  siprintf(labels[ni], "Cut %d", count);    ids[ni++] = 1;
-  siprintf(labels[ni], "Delete %d", count); ids[ni++] = 2;
-  strcpy(labels[ni], "Cancel");             ids[ni++] = 3;
+  enum { B_COPY, B_CUT, B_DELETE, B_SWAP, B_CANCEL };
+  int  ids[5], ni = 0;
+  char labels[5][24];
+  siprintf(labels[ni], "Copy %d", count);   ids[ni++] = B_COPY;
+  siprintf(labels[ni], "Cut %d", count);    ids[ni++] = B_CUT;
+  siprintf(labels[ni], "Delete %d", count); ids[ni++] = B_DELETE;
+  if (count == 2) { strcpy(labels[ni], "Swap names"); ids[ni++] = B_SWAP; }
+  strcpy(labels[ni], "Cancel");             ids[ni++] = B_CANCEL;
 
   int sel = 0;
   bool dirty = true;
@@ -928,18 +1362,35 @@ static bool batch_menu(int count) {
     else if (mv & KEY_UP)   sel = (sel == 0) ? ni - 1 : sel - 1;
     else if (hit & KEY_A) {
       switch (ids[sel]) {
-        case 0:
-        case 1: {
-          int cap = capture_marked(ids[sel] == 0 ? CLIP_COPY : CLIP_CUT);
+        case B_COPY:
+        case B_CUT: {
+          int cap = capture_marked(ids[sel] == B_COPY ? CLIP_COPY : CLIP_CUT);
           if (cap < count) msg_screen("Clipboard full", UI_WARN, "Not all items captured");
           g_selmode = false;
           return false;                       /* navigate, then Paste */
         }
-        case 2: { bool r = do_delete_marked(count); g_selmode = false; return r; }
-        case 3: return false;
+        case B_DELETE: { bool r = do_delete_marked(count); g_selmode = false; return r; }
+        case B_SWAP:   { bool r = do_swap_names();         g_selmode = false; return r; }
+        case B_CANCEL: return false;
       }
     }
   }
+}
+
+/* After a find navigated g_cwd into the match's folder, select the matched
+ * entry by name (no-op if g_find_sel is empty). Called right after the rescan
+ * that follows the actions menu. */
+static void apply_find_sel(int* sel, int* top) {
+  if (!g_find_sel[0]) return;             /* not a find-navigate: leave the cursor put */
+  int row = 0;                            /* default: top of the freshly-listed folder */
+  for (int i = 0; i < g_n; i++) {
+    if (!strcmp(g_entries[i].name, g_find_sel)) {
+      row = i + (at_root() ? 0 : 1);      /* +1 for the synthetic [..] row */
+      break;
+    }
+  }
+  *sel = row; *top = 0;                    /* if the match isn't listed (e.g. hidden), land at top */
+  g_find_sel[0] = 0;
 }
 
 static void run_browser(void) {
@@ -966,20 +1417,20 @@ static void run_browser(void) {
 
     if (mv & KEY_DOWN)        { if (rows) sel = (sel + 1) % rows; }
     else if (mv & KEY_UP)     { if (rows) sel = (sel == 0) ? rows - 1 : sel - 1; }
-    else if (hit & KEY_LEFT)  { sel -= 11; if (sel < 0) sel = 0; }                       /* jump 11 up   */
-    else if (hit & KEY_RIGHT) { sel += 11; if (sel >= rows) sel = rows ? rows - 1 : 0; } /* jump 11 down */
+    else if (hit & KEY_LEFT)  { sel -= g_set.jump; if (sel < 0) sel = 0; }                       /* jump up   */
+    else if (hit & KEY_RIGHT) { sel += g_set.jump; if (sel >= rows) sel = rows ? rows - 1 : 0; } /* jump down */
     else if (hit & KEY_L)     { sel -= LIST_ROWS; if (sel < 0) sel = 0; }                /* page up   */
     else if (hit & KEY_R)     { sel += LIST_ROWS; if (sel >= rows) sel = rows ? rows - 1 : 0; } /* page down */
     else if (g_selmode) {
-      /* selection mode: A marks the highlighted entry, START marks all/none,
-       * SELECT opens batch actions, B leaves selection mode. */
+      /* selection mode: A marks the highlighted entry, SELECT marks all/none,
+       * START opens batch actions, B leaves selection mode. */
       if (hit & KEY_A) {
         FsEntry* e = br_entry(sel);
         if (e) { int idx = (int)(e - g_entries); g_marked[idx] = !g_marked[idx]; }
-      } else if (hit & KEY_START) {
+      } else if (hit & KEY_SELECT) {
         bool none = (marked_count() == 0);
         for (int i = 0; i < g_n; i++) g_marked[i] = none;   /* none -> all, else clear */
-      } else if (hit & KEY_SELECT) {
+      } else if (hit & KEY_START) {
         int mc = marked_count();
         if (mc == 0) msg_screen("No items marked", UI_DIM, "A marks the highlighted item");
         else if (batch_menu(mc)) { rescan(); sel = 0; top = 0; }
@@ -988,8 +1439,8 @@ static void run_browser(void) {
         memset(g_marked, 0, sizeof(g_marked));
       }
     }
-    else if (hit & KEY_START) {
-      /* cycle the 6 sort states: Name/Size/Date x ascending/descending */
+    else if (hit & KEY_SELECT) {
+      /* SELECT: cycle the 6 sort states: Name/Size/Date x ascending/descending */
       int s = ((int)g_sortkey * 2 + (g_sortrev ? 1 : 0) + 1) % 6;
       g_sortkey = (FsSortKey)(s / 2);
       g_sortrev = (s & 1) != 0;
@@ -1005,21 +1456,16 @@ static void run_browser(void) {
         char np[PATH_MAX];
         if (path_join(g_cwd, e->name, np)) { strcpy(g_cwd, np); rescan(); sel = 0; top = 0; }
       } else {
-        if (actions_menu(e)) { rescan(); }        /* file -> actions menu */
+        if (actions_menu(e)) { rescan(); apply_find_sel(&sel, &top); }   /* file -> actions menu */
       }
     }
     else if (hit & KEY_B) {
       if (!at_root()) { path_up(); rescan(); sel = 0; top = 0; }
     }
-    else if (hit & KEY_SELECT) {
-      /* SELECT: view a file, or open the actions menu on a folder / [..] */
+    else if (hit & KEY_START) {
+      /* START: open the actions menu (file, folder, or [..]) — View lives inside it */
       FsEntry* e = br_entry(sel);
-      if (!e || e->is_dir) {
-        if (actions_menu(e)) { rescan(); }
-      } else {
-        char np[PATH_MAX];
-        if (path_join(g_cwd, e->name, np)) file_viewer(np, e->name, e->size);
-      }
+      if (actions_menu(e)) { rescan(); apply_find_sel(&sel, &top); }
     }
   }
 }
@@ -1030,7 +1476,7 @@ static void init_system(void) {
   irq_init(NULL);
   irq_add(II_VBLANK, NULL);
   ui_init();
-  key_repeat_mask(KEY_UP | KEY_DOWN);
+  ui_set_repeat_mask(KEY_UP | KEY_DOWN);
   key_repeat_limits(16, 4);   /* hold ~0.27s, then repeat ~15/s */
 }
 
@@ -1061,6 +1507,21 @@ int main(void) {
 
   int wr = log_flush_to_sd(LOG_PATH);
   log_line("log flush -> %s", wr == 0 ? "OK" : "FAILED");
+
+  /* load persisted settings (reads on both carts; missing file -> defaults),
+   * apply the theme + nav tuning, and reopen the last folder if it still
+   * exists (else stay at root). */
+  cfg_load(CFG_PATH);
+  theme_apply(g_set.theme);
+  g_sortkey = (FsSortKey)g_set.sort_key;
+  g_sortrev = g_set.sort_rev;
+  key_repeat_limits(g_set.key_delay, g_set.key_speed);
+  log_line("cfg: theme=%d sort=%d/%d hidden=%d last_dir='%s'",
+           g_set.theme, g_set.sort_key, g_set.sort_rev, g_set.show_hidden, g_set.last_dir);
+  if (g_set.last_dir[0] == '/') {
+    DIR d;
+    if (f_opendir(&d, g_set.last_dir) == FR_OK) { f_closedir(&d); strcpy(g_cwd, g_set.last_dir); }
+  }
 
   run_browser();
   return 0;

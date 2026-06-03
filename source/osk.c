@@ -61,9 +61,9 @@ static void osk_field(const char* buf, int len, int cpos) {
     char ch[2];
     ch[0] = (ci < len) ? buf[ci] : ' ';    /* caret can sit just past the last char */
     ch[1] = 0;
-    if (ci == cpos) {                        /* editable cell: white box, black text */
-      m3_rect(x, y, x + 8, y + UI_ROW_H, RGB15(31, 31, 31));
-      ui_text(x, y, RGB15(0, 0, 0), ch);
+    if (ci == cpos) {                        /* editable cell: inverse video (theme-aware) */
+      m3_rect(x, y, x + 8, y + UI_ROW_H, UI_TEXT);
+      ui_text(x, y, UI_BG, ch);
     } else if (ci < len) {
       ui_text(x, y, UI_TEXT, ch);
     }
@@ -107,21 +107,29 @@ bool osk_input(const char* prompt, const char* initial, char* out, int cap) {
   int cpos = len;          /* text caret: 0..len (len = just past the last char) */
   bool dirty = true;
   const char* warn = NULL;
+  bool ret = false;
+
+  /* Let the grid cursor (d-pad) and the text caret (L/R) auto-repeat on a held
+   * press, using the global key-repeat timing the user set in Settings. Save the
+   * caller's repeat mask and restore it exactly on exit (the viewer calls us for
+   * "go to offset" mid-session and must keep its own paging-repeat mask). */
+  u16 saved_mask = ui_get_repeat_mask();
+  ui_set_repeat_mask(KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT | KEY_L | KEY_R);
 
   while (1) {
     if (cc >= rowlen(cr)) cc = rowlen(cr) - 1;   /* keep grid cursor in-row */
     if (dirty) { osk_render(prompt, buf, len, cpos, cr, cc, warn); dirty = false; }
     osk_vsync();
 
-    /* d-pad moves the char-grid cursor; L/R (shoulders) move the TEXT caret. */
-    u16 k = key_hit(KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT | KEY_L | KEY_R |
-                    KEY_A | KEY_B | KEY_START | KEY_SELECT);
-    if (!k) continue;
+    /* d-pad + L/R slide (auto-repeat); insert/delete/confirm/cancel are discrete. */
+    u16 mv  = key_repeat(KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT | KEY_L | KEY_R);
+    u16 hit = key_hit(KEY_A | KEY_B | KEY_START | KEY_SELECT);
+    if (!mv && !hit) continue;
     dirty = true;
     warn = NULL;
 
-    if (k & KEY_SELECT) return false;
-    else if (k & KEY_START) {
+    if (hit & KEY_SELECT) { ret = false; break; }
+    else if (hit & KEY_START) {
       if (!name_ok(buf)) {
         warn = "Invalid name - fix & retry";
       } else if ((int)strlen(buf) >= cap - 1) {
@@ -132,10 +140,10 @@ bool osk_input(const char* prompt, const char* initial, char* out, int cap) {
         int i = 0;
         for (; i < cap - 1 && buf[i]; i++) out[i] = buf[i];
         out[i] = 0;
-        return true;
+        ret = true; break;
       }
     }
-    else if (k & KEY_A) {                    /* insert the grid char AT the caret */
+    else if (hit & KEY_A) {                  /* insert the grid char AT the caret */
       if (len < OSK_MAXLEN) {
         for (int j = len; j > cpos; j--) buf[j] = buf[j - 1];
         buf[cpos] = KB[cr][cc];
@@ -143,17 +151,20 @@ bool osk_input(const char* prompt, const char* initial, char* out, int cap) {
         buf[len] = 0;
       }
     }
-    else if (k & KEY_B) {                    /* delete the char BEFORE the caret */
+    else if (hit & KEY_B) {                  /* delete the char BEFORE the caret */
       if (cpos > 0) {
         for (int j = cpos - 1; j < len; j++) buf[j] = buf[j + 1];
         len--; cpos--;
       }
     }
-    else if (k & KEY_L) { if (cpos > 0)   cpos--; }   /* caret left  */
-    else if (k & KEY_R) { if (cpos < len) cpos++; }   /* caret right */
-    else if (k & KEY_UP)    { cr = (cr == 0) ? OSK_ROWS - 1 : cr - 1; }
-    else if (k & KEY_DOWN)  { cr = (cr + 1) % OSK_ROWS; }
-    else if (k & KEY_LEFT)  { int rl = rowlen(cr); cc = (cc == 0) ? rl - 1 : cc - 1; }
-    else if (k & KEY_RIGHT) { int rl = rowlen(cr); cc = (cc + 1) % rl; }
+    else if (mv & KEY_L) { if (cpos > 0)   cpos--; }   /* caret left  */
+    else if (mv & KEY_R) { if (cpos < len) cpos++; }   /* caret right */
+    else if (mv & KEY_UP)    { cr = (cr == 0) ? OSK_ROWS - 1 : cr - 1; }
+    else if (mv & KEY_DOWN)  { cr = (cr + 1) % OSK_ROWS; }
+    else if (mv & KEY_LEFT)  { int rl = rowlen(cr); cc = (cc == 0) ? rl - 1 : cc - 1; }
+    else if (mv & KEY_RIGHT) { int rl = rowlen(cr); cc = (cc + 1) % rl; }
   }
+
+  ui_set_repeat_mask(saved_mask);            /* restore the caller's repeat mask */
+  return ret;
 }

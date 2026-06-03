@@ -12,7 +12,7 @@ static int name_ci(const char* a, const char* b) {
   }
 }
 
-int fsop_list(const char* dir, FsEntry* out, int max, bool* truncated) {
+int fsop_list(const char* dir, FsEntry* out, int max, bool* truncated, bool show_hidden) {
   if (truncated) *truncated = false;
   if (max <= 0) return 0;
 
@@ -27,6 +27,7 @@ int fsop_list(const char* dir, FsEntry* out, int max, bool* truncated) {
    * apart. */
   FRESULT fr;
   while ((fr = f_readdir(&d, &fno)) == FR_OK && fno.fname[0]) {
+    if (!show_hidden && (fno.fattrib & (AM_HID | AM_SYS))) continue;  /* hidden/system filtered */
     if (n >= max) { if (truncated) *truncated = true; break; }
 
     FsEntry* e = &out[n];
@@ -291,6 +292,145 @@ FRESULT fsop_copy(const char* src, const char* dst) {
   if (fr != FR_OK) return fr;
   if (fno.fattrib & AM_DIR) return copy_tree(src, dst);
   return copy_one_file(src, dst);
+}
+
+/* ---- recursive folder size --------------------------------------------- */
+
+/* Explicit-stack size walk, mirroring rmtree's traversal (reuses s_ds/s_plen/
+ * s_path/s_fno; never runs concurrently with a copy/delete). Sums file bytes
+ * and counts files + sub-directories under `path`. Read-only. */
+FRESULT fsop_dirsize(const char* path, uint64_t* bytes, uint32_t* files,
+                     uint32_t* dirs) {
+  uint64_t tb = 0; uint32_t tf = 0, td = 0;
+
+  int n = 0; for (; path[n] && n < FS_PATH_CAP - 1; n++) s_path[n] = path[n];
+  s_path[n] = 0;
+
+  int depth = 0;
+  FRESULT fr = f_opendir(&s_ds[0], s_path);
+  if (fr != FR_OK) return fr;
+  s_plen[0] = n;
+
+  while (depth >= 0) {
+    fr = f_readdir(&s_ds[depth], &s_fno);
+    if (fr != FR_OK) break;
+
+    if (s_fno.fname[0] == 0) {                /* level exhausted: pop */
+      f_closedir(&s_ds[depth]);
+      depth--;
+      if (depth >= 0) s_path[s_plen[depth]] = 0;   /* restore parent path */
+      continue;
+    }
+
+    int pl = s_plen[depth], nl = (int)strlen(s_fno.fname);
+    if (pl + 1 + nl + 1 > FS_PATH_CAP) { fr = FR_NOT_ENOUGH_CORE; break; }
+    if (pl == 1 && s_path[0] == '/') { for (int i = 0; i < nl; i++) s_path[1 + i] = s_fno.fname[i]; s_path[1 + nl] = 0; }
+    else { s_path[pl] = '/'; for (int i = 0; i < nl; i++) s_path[pl + 1 + i] = s_fno.fname[i]; s_path[pl + 1 + nl] = 0; }
+    int childlen = (int)strlen(s_path);
+
+    if (s_fno.fattrib & AM_DIR) {             /* count + descend */
+      td++;
+      if (depth + 1 >= FS_RMTREE_MAX_DEPTH) { fr = FR_NOT_ENOUGH_CORE; break; }
+      fr = f_opendir(&s_ds[depth + 1], s_path);
+      if (fr != FR_OK) break;
+      depth++;
+      s_plen[depth] = childlen;
+    } else {                                  /* count a file */
+      tf++;
+      tb += (uint64_t)s_fno.fsize;
+      s_path[pl] = 0;                         /* restore parent path */
+    }
+  }
+
+  if (fr != FR_OK) {
+    for (int i = 0; i <= depth && i < FS_RMTREE_MAX_DEPTH; i++) f_closedir(&s_ds[i]);
+    return fr;
+  }
+  if (bytes) *bytes = tb;
+  if (files) *files = tf;
+  if (dirs)  *dirs  = td;
+  return FR_OK;
+}
+
+/* ---- recursive find ----------------------------------------------------- */
+
+/* ASCII case-insensitive substring: does `hay` contain `needle`? Non-ASCII
+ * bytes compare exactly (UTF-8 byte sequences still match literally). */
+static int contains_ci(const char* hay, const char* needle) {
+  if (!needle[0]) return 1;
+  for (const char* h = hay; *h; h++) {
+    const char* a = h; const char* b = needle;
+    while (*a && *b) {
+      char ca = *a, cb = *b;
+      if (ca >= 'a' && ca <= 'z') ca = (char)(ca - 32);
+      if (cb >= 'a' && cb <= 'z') cb = (char)(cb - 32);
+      if (ca != cb) break;
+      a++; b++;
+    }
+    if (!*b) return 1;
+  }
+  return 0;
+}
+
+int fsop_find(const char* root, const char* keyword,
+              char out_paths[][FS_PATH_CAP], uint8_t* out_isdir,
+              int max, bool* truncated) {
+  if (truncated) *truncated = false;
+  int found = 0;
+
+  int n = 0; for (; root[n] && n < FS_PATH_CAP - 1; n++) s_path[n] = root[n];
+  s_path[n] = 0;
+
+  int depth = 0;
+  FRESULT fr = f_opendir(&s_ds[0], s_path);
+  if (fr != FR_OK) return -1;
+  s_plen[0] = n;
+
+  while (depth >= 0) {
+    fr = f_readdir(&s_ds[depth], &s_fno);
+    if (fr != FR_OK) break;                   /* I/O error: stop, return partial */
+
+    if (s_fno.fname[0] == 0) {                /* level exhausted: pop */
+      f_closedir(&s_ds[depth]);
+      depth--;
+      if (depth >= 0) s_path[s_plen[depth]] = 0;
+      continue;
+    }
+
+    int pl = s_plen[depth], nl = (int)strlen(s_fno.fname);
+    if (pl + 1 + nl + 1 > FS_PATH_CAP) continue;   /* would overflow: skip this entry */
+    if (pl == 1 && s_path[0] == '/') { for (int i = 0; i < nl; i++) s_path[1 + i] = s_fno.fname[i]; s_path[1 + nl] = 0; }
+    else { s_path[pl] = '/'; for (int i = 0; i < nl; i++) s_path[pl + 1 + i] = s_fno.fname[i]; s_path[pl + 1 + nl] = 0; }
+    int childlen = (int)strlen(s_path);
+    int isdir = (s_fno.fattrib & AM_DIR) != 0;
+
+    if (contains_ci(s_fno.fname, keyword)) {
+      if (found < max) {
+        for (int i = 0; i <= childlen; i++) out_paths[found][i] = s_path[i];  /* copy incl. NUL */
+        if (out_isdir) out_isdir[found] = (uint8_t)(isdir ? 1 : 0);
+        found++;
+      } else {
+        if (truncated) *truncated = true;
+        break;                            /* cap reached: result is final, stop the walk */
+      }
+    }
+
+    if (isdir) {                              /* descend into every subdirectory */
+      if (depth + 1 >= FS_RMTREE_MAX_DEPTH) { s_path[pl] = 0; continue; }   /* too deep: skip subtree */
+      fr = f_opendir(&s_ds[depth + 1], s_path);
+      if (fr != FR_OK) { s_path[pl] = 0; fr = FR_OK; continue; }            /* unreadable: skip, not fatal */
+      depth++;
+      s_plen[depth] = childlen;
+    } else {
+      s_path[pl] = 0;                         /* restore parent path */
+    }
+  }
+
+  /* Close any DIR levels still open on a non-normal exit (the cap-reached break
+   * or a readdir error). A normal walk pops every level (depth ends at -1), so
+   * this closes nothing then — no double close. */
+  for (int i = 0; i <= depth && i < FS_RMTREE_MAX_DEPTH; i++) f_closedir(&s_ds[i]);
+  return found;
 }
 
 /* ---- hex-editor verified write ----------------------------------------- */

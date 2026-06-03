@@ -6,24 +6,24 @@ family described in [`../../docs/ROADMAP.md`](../../docs/ROADMAP.md) (Project A)
 
 ## Status
 
-**Code-complete (Phases 0–3), release candidate — builds clean.** The only
-remaining gate is the hardware sign-off (the SD write path isn't emulated). See
-[RELEASE-STATUS.md](RELEASE-STATUS.md) and the consolidated
+**Code-complete (Phases 0–4), release candidate — builds clean.** The only
+remaining gate is the hardware sign-off (the SD write path and the reboot are
+not emulated). See [RELEASE-STATUS.md](RELEASE-STATUS.md) and the consolidated
 [HARDWARE-SIGNOFF.md](HARDWARE-SIGNOFF.md).
 
 **Phase 0 (read-only browser)** — runs on **both** carts; validated on real hardware:
 
 - Directory listing with the `[..]` up-entry, folders sorted before files
 - Navigation: UP/DOWN (auto-repeat), LEFT/RIGHT jump to top/bottom, L/R page up/down
-- Sort by **Name / Size / Date** (START cycles all 6 states) ascending/descending
+- Sort by **Name / Size / Date** (SELECT cycles all 6 states) ascending/descending
 - **Free / total space** on the status bar, plus a `sel/total` scroll-position indicator
 - A **detail panel** under the list showing the highlighted entry's fuller name and its
   **date / time + size** (the complete name lives in Properties)
 - File-type rows, and a read-only **file viewer** (Hex / Text, page-windowed so it
-  handles files larger than RAM) via SELECT on a file
+  handles files larger than RAM) via the actions menu's **View** item
 
 **Phase 1 (write — EZ-Flash Omega only)** — validated on real hardware. Reached via the
-actions menu (press **A** on a file, or **SELECT** on a folder; write items appear
+actions menu (press **A** on a file, or **START** on a folder; write items appear
 only on the Omega; the EverDrive stays read-only):
 
 - An **on-screen keyboard** (QWERTY d-pad grid, both cases shown) for typed names,
@@ -43,10 +43,10 @@ only on the Omega; the EverDrive stays read-only):
 
 - **Multi-select + batch** — from the actions menu, "Select multiple" enters a
   selection mode: **A** marks/unmarks the highlighted entry (shown with a `*`),
-  **START** marks all / clears all, the status bar shows the marked count + total
-  size, and **SELECT** opens a batch menu to **Copy / Cut / Delete** all marked
-  items at once. **B** leaves selection mode. (Copy/Cut feed the same clipboard,
-  so you then navigate and Paste.)
+  **SELECT** marks all / clears all, the status bar shows the marked count + total
+  size, and **START** opens a batch menu to **Copy / Cut / Delete** all marked
+  items at once (and **Swap names** when exactly two are marked). **B** leaves
+  selection mode. (Copy/Cut feed the same clipboard, so you then navigate and Paste.)
 
 This completes the core file-manager feature set. Every write is confirmed and
 logged to `sdbrowse_log.txt`.
@@ -67,33 +67,96 @@ editable cell is shown as a white box with black text), so you can fix a mistake
 in the middle without deleting everything. **A** inserts at the caret, **B**
 backspaces before it.
 
+**Phase 4 (settings, themes, reboot)** — quality-of-life, reached from the actions
+menu (always present on **both** carts):
+
+- **Settings menu** with persistent preferences saved to `/sdbrowse.cfg`
+  (written on the Omega only; read on both carts — on the EverDrive settings are
+  session-only and reset to defaults next launch). UP/DOWN pick a row, LEFT/RIGHT
+  change the value (numeric rows auto-repeat on hold), **A** saves, **B** cancels
+  and reverts. The settings: **theme**, **sort** (key + direction),
+  **show hidden** files, **confirm before delete**, **default file viewer**
+  (Hex/Text), **L/R jump distance**, **key-repeat delay**, **key-repeat speed**,
+  **free-space unit** (B/KB/MB/GB), and **Reset to defaults** (L/R on that row;
+  keeps the remembered folder).
+- **5 themes** — Dark Blue (default), Dark Gray, Dark Green, Dark Purple, and a
+  Light high-contrast scheme. The theme previews live as you cycle it.
+- **Remembers the last folder** — reopens it on next launch (falls back to root
+  if it no longer exists).
+- **Reboot to loader** *(experimental)* — soft-reboot toward the cart's loader
+  menu (EZ-Flash kernel / EverDrive OS) instead of power-cycling. Confirmed
+  working on the EZ-Flash Omega DE; the EverDrive path is still being validated.
+  Writes no data either way.
+
+**More file operations** — added to the actions / batch / viewer:
+
+- **Find…** — recursive keyword search from the current folder: type a keyword and
+  get a scrollable list of every file/folder whose name contains it (ASCII
+  case-insensitive). Picking a result drops you in that item's folder with it
+  highlighted. Read-only, works on **both** carts. (Search everything by going to
+  `/` first.)
+- **Folder size** — recursively totals a folder's bytes + file/subfolder counts
+  (read-only, works on **both** carts).
+- **Duplicate** — copies the selected file/folder in place under an auto-suffixed
+  name (`foo.txt` → `foo (copy).txt`); folders duplicate recursively. *(Omega)*
+- **New file** — creates an empty file via the keyboard (then fill it with the
+  hex editor). *(Omega)*
+- **Swap names** — in selection mode, mark **exactly two** items and pick "Swap
+  names" to exchange their filenames (a safe 3-way rename). *(Omega)*
+- **Go to offset** — in the file viewer, jump straight to a hex byte offset
+  instead of paging there.
+
+The actions menu now **scrolls** (▲/▼ indicators) when it holds more items than
+fit on screen, so nothing spills past the box.
+
 ## Controls
 
 | Key | Action |
 |-----|--------|
 | UP / DOWN | Move cursor (hold to repeat) |
-| LEFT / RIGHT | Jump 11 rows up / down |
+| LEFT / RIGHT | Jump up / down by the configured distance (default 11 rows) |
 | L / R | Page up / page down (one screen) |
-| A | **Folder:** open it · **File:** open the **actions menu** (Info, and on Omega: rename / copy / cut / paste here / attributes / delete / new folder / select multiple) |
-| SELECT | **File:** open the Hex/Text viewer · **Folder / `[..]`:** open the actions menu |
+| A | **Folder:** open it · **File:** open the **actions menu** (View / Info / **Find…**; **Settings…** and **Reboot to loader…** always; and on Omega: rename / copy / cut / duplicate / paste here / attributes / delete / new file / new folder / select multiple) |
+| START | **Any item:** open the **actions menu** (the same menu A opens on a file — **View** lives inside it; this is also how you reach Settings/Reboot/Find when nothing is selected) |
 | B | Up one folder |
-| START | Cycle the sort: 6 states across Name / Size / Date, each ascending and descending. The status bar spells out the active one — "Name A-Z", "Name Z-A", "Size small-big", "Size big-small", "Date old-new", "Date new-old". Folders always sort before files. |
+| SELECT | Cycle the sort: 6 states across Name / Size / Date, each ascending and descending. The status bar spells out the active one — "Name A-Z", "Name Z-A", "Size small-big", "Size big-small", "Date old-new", "Date new-old". Folders always sort before files. |
+
+> **Note:** START opens the actions menu on any item; on a file that's the same
+> menu as A (which holds **View**). SELECT cycles the sort. START stays the
+> consistent primary/confirm button in the keyboard, hex-editor save, and settings.
 
 ### Selection mode (from "Select multiple")
 
 | Key | Action |
 |-----|--------|
 | A | Mark / unmark the highlighted entry (`*`) |
-| START | Mark all / clear all |
-| SELECT | Batch menu: Copy / Cut / Delete the marked items |
+| SELECT | Mark all / clear all |
+| START | Batch menu: Copy / Cut / Delete (and **Swap names** when exactly 2 are marked) |
 | B | Leave selection mode |
+
+### Settings menu
+
+| Key | Action |
+|-----|--------|
+| UP / DOWN | Pick a setting |
+| LEFT / RIGHT | Change the highlighted value (numeric rows auto-repeat on hold; theme/sort/toggles step once per press) |
+| A / START | Save and close |
+| B | Cancel — revert every change, including the live theme preview |
+
+### Find results
+
+| Key | Action |
+|-----|--------|
+| UP / DOWN | Move through the matches (hold to repeat) |
+| A / START | Go to the highlighted match (opens its folder with it selected) |
+| B | Back to the browser |
 
 ### On-screen keyboard (QWERTY)
 
 | Key | Action |
 |-----|--------|
-| d-pad | Move the character cursor (rows: numbers, qwerty, lower, upper, symbols + space) |
-| L / R | Move the text caret left / right (edit mid-text; caret shown as a white box) |
+| d-pad | Move the character cursor (hold to repeat); rows: numbers, qwerty, lower, upper, symbols + space |
+| L / R | Move the text caret left / right (hold to repeat; edit mid-text, caret shown as a white box) |
 | A | Insert the highlighted character at the caret |
 | B | Backspace (delete before the caret) |
 | START | Confirm |
@@ -107,6 +170,7 @@ backspaces before it.
 | UP / DOWN | Scroll one row |
 | L / R | Page up / page down |
 | LEFT / RIGHT | Jump to start / end of file |
+| SELECT | Go to offset (type a hex offset) |
 | START | (hex, Omega) enter EDIT mode |
 | B | Back to the browser |
 
@@ -152,9 +216,12 @@ projects/sd-browser/
   Makefile        # adapted from the repo root; SRCDIRS/INCDIRS add ../../{lib,source}
   build.sh        # Docker build (mounts repo root)
   source/
-    main.c        # bring-up + browser UI/state machine (Phase 0)
-    fs_ops.c/.h   # pure-C file ops: list / sort / free-space (host-testable)
+    main.c        # bring-up + browser UI/state machine; actions/settings/reboot
+    fs_ops.c/.h   # pure-C file ops: list / sort / free-space / copy / delete (host-testable)
+    osk.c/.h      # on-screen QWERTY keyboard with a movable caret
     ui.c/.h       # Mode-3 bitmap UI layer (vendored from the record-mixer)
+    theme.c/.h    # 5 runtime color themes; UI_* macros read the active g_theme
+    cfg.c/.h      # /sdbrowse.cfg INI settings (load both carts, save Omega-only)
 ```
 
 ## Conventions inherited from the toolkit

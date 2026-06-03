@@ -3,6 +3,7 @@
 
 #include <tonc.h>
 #include <stdbool.h>
+#include "theme.h"
 
 /* Bitmap (Mode 3) UI helper layer: filled panels, bordered boxes, colored text,
  * and a solid selection-highlight bar. Text still goes through libtonc TTE
@@ -16,19 +17,20 @@
 #define UI_ROW_H   8            /* sys8 font line height (px)                   */
 #define UI_COLS    30           /* 240/8 fixed-width columns                    */
 
-/* Palette (RGB15). Tuned for a dark, readable look. */
-#define UI_BG       RGB15( 1,  2,  4)   /* screen background          */
-#define UI_PANEL    RGB15( 2,  4,  9)   /* panel fill                 */
-#define UI_BORDER   RGB15(10, 13, 20)   /* panel/divider border       */
-#define UI_TEXT     RGB15(31, 31, 31)   /* primary text               */
-#define UI_DIM      RGB15(17, 18, 21)   /* secondary/dim text         */
-#define UI_TITLE    RGB15( 8, 28, 31)   /* headers (cyan)             */
-#define UI_SEL      RGB15( 5, 10, 24)   /* selection highlight bar    */
-#define UI_SELTEXT  RGB15(31, 31, 18)   /* text on the highlight bar  */
-#define UI_OK       RGB15( 8, 28, 10)   /* good/green                 */
-#define UI_WARN     RGB15(31, 18,  3)   /* warning/orange             */
-#define UI_DIRCLR   RGB15(10, 24, 31)   /* directory rows (cyan)      */
-#define UI_SAVECLR  RGB15(31, 31, 31)   /* file rows (white)          */
+/* Palette — now reads the active runtime theme (theme.h) so the UI re-colors
+ * live when the user switches themes; no call-site changes needed. */
+#define UI_BG       (g_theme.bg)        /* screen background          */
+#define UI_PANEL    (g_theme.panel)     /* panel fill                 */
+#define UI_BORDER   (g_theme.border)    /* panel/divider border       */
+#define UI_TEXT     (g_theme.text)      /* primary text               */
+#define UI_DIM      (g_theme.dim)       /* secondary/dim text         */
+#define UI_TITLE    (g_theme.title)     /* headers                    */
+#define UI_SEL      (g_theme.sel)       /* selection highlight bar    */
+#define UI_SELTEXT  (g_theme.seltext)   /* text on the highlight bar  */
+#define UI_OK       (g_theme.ok)        /* good/green                 */
+#define UI_WARN     (g_theme.warn)      /* warning/orange             */
+#define UI_DIRCLR   (g_theme.dirclr)    /* directory rows             */
+#define UI_SAVECLR  (g_theme.saveclr)   /* file rows                  */
 
 /* Switch to Mode 3 and init bitmap TTE with the fixed 8x8 system font. */
 void ui_init(void);
@@ -53,5 +55,11 @@ void ui_text_sel(int x, int y, int w, bool selected, u16 ink, const char* s);
  * (never splits a codepoint); appends '~' as the last column if truncated.
  * `out` must hold at least max_cols*4 + 1 bytes to be safe. */
 void ui_truncate(char* out, const char* in, int max_cols);
+
+/* Wrappers around tonc's key_repeat_mask that also remember the current mask,
+ * so a modal can save the caller's mask on entry and restore it exactly on exit
+ * (instead of hard-coding a value and clobbering a nested caller's mask). */
+void ui_set_repeat_mask(u16 mask);
+u16  ui_get_repeat_mask(void);
 
 #endif /* UI_H */

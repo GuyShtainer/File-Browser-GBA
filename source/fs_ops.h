@@ -31,7 +31,7 @@ typedef enum { FS_SORT_NAME = 0, FS_SORT_SIZE = 1, FS_SORT_DATE = 2 } FsSortKey;
  * Returns the number of entries placed (>= 0), or -1 if the directory could
  * not be opened. If there are more than `max` entries the list is capped at
  * `max` and *truncated (if non-NULL) is set true — never a silent cap. */
-int fsop_list(const char* dir, FsEntry* out, int max, bool* truncated);
+int fsop_list(const char* dir, FsEntry* out, int max, bool* truncated, bool show_hidden);
 
 /* Stable in-place sort. Directories always sort before files (regardless of
  * `reverse`); within each group the order is by `key`, with name as the
@@ -43,10 +43,31 @@ void fsop_sort(FsEntry* a, int n, FsSortKey key, bool reverse);
 FRESULT fsop_freespace(const char* path, uint64_t* free_bytes,
                        uint64_t* total_bytes);
 
-/* ---- mutating ops (Phase 1) — callers gate these on EZ-Flash Omega ------ */
+#define FS_PATH_CAP         256   /* max path length the recursive ops handle */
+#define FS_RMTREE_MAX_DEPTH 24    /* max directory nesting for recursive walks */
 
-#define FS_PATH_CAP         256   /* max path length these ops handle        */
-#define FS_RMTREE_MAX_DEPTH 24    /* max directory nesting for recursive rm   */
+/* Recursively total the bytes + file/subfolder counts under directory `path`
+ * (excluding `path` itself). Uses the same explicit dir-stack as the copy/delete
+ * walks — never C recursion — bounded by FS_RMTREE_MAX_DEPTH. Any out pointer
+ * may be NULL. Returns FR_OK, or the first FatFs error (FR_NOT_ENOUGH_CORE if
+ * the tree is too deep or a path exceeds FS_PATH_CAP). Read-only: safe on both
+ * carts. */
+FRESULT fsop_dirsize(const char* path, uint64_t* bytes, uint32_t* files,
+                     uint32_t* dirs);
+
+/* Recursively search `root` and every subdirectory (bounded by
+ * FS_RMTREE_MAX_DEPTH) for entries whose name contains `keyword` (ASCII
+ * case-insensitive substring; empty keyword matches everything). Writes up to
+ * `max` full paths into out_paths[][FS_PATH_CAP] with a parallel out_isdir[]
+ * (1 = directory). Sets *truncated (if non-NULL) when more than `max` matched.
+ * Unreadable/too-deep subtrees — and any entry whose full path would exceed
+ * FS_PATH_CAP — are silently skipped (not fatal, not flagged). Read-only — safe
+ * on both carts. Returns the match count (>= 0), or -1 if `root` cannot be opened. */
+int fsop_find(const char* root, const char* keyword,
+              char out_paths[][FS_PATH_CAP], uint8_t* out_isdir,
+              int max, bool* truncated);
+
+/* ---- mutating ops (Phase 1) — callers gate these on EZ-Flash Omega ------ */
 
 /* Create a directory. Returns FR_OK, FR_EXIST, etc. */
 FRESULT fsop_mkdir(const char* path);

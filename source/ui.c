@@ -35,6 +35,10 @@ void ui_text_sel(int x, int y, int w, bool selected, u16 ink, const char* s) {
   tte_write(s);
 }
 
+static u16 s_repeat_mask = 0;
+void ui_set_repeat_mask(u16 mask) { s_repeat_mask = mask; key_repeat_mask(mask); }
+u16  ui_get_repeat_mask(void)     { return s_repeat_mask; }
+
 void ui_truncate(char* out, const char* in, int max_cols) {
   if (max_cols < 1) { out[0] = 0; return; }
   int cols = 0, i = 0, o = 0, last_start = 0;
