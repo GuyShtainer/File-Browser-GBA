@@ -40,6 +40,14 @@
 #define FS_MAX    256
 #define PATH_MAX  256
 
+/* Recycle bin. Deleted items are MOVED (same-volume f_rename — atomic, no copy)
+ * into TRASH_DIR; a per-item sidecar "<stored><TRASH_SIDE>" records the original
+ * full path so Restore can put it back. TRASH_DIR is hidden+system so it stays
+ * out of normal browsing. ".origin~" is a reserved suffix (see is_reserved). */
+#define TRASH_DIR   "/.sdtrash"
+#define TRASH_SIDE  ".origin~"
+static bool under_trash(const char* path);   /* true if path is /.sdtrash or inside it */
+
 /* ---- layout (pixels) ---------------------------------------------------- */
 #define HDR_Y         0
 #define BOX_Y         10
@@ -223,7 +231,20 @@ static void rescan(void) {
   int r = fsop_list(g_cwd, g_entries, FS_MAX, &g_trunc, g_set.show_hidden);
   g_n = (r < 0) ? 0 : r;
   if (r < 0) log_line("opendir %s failed", g_cwd);
-  else strcpy(g_set.last_dir, g_cwd);       /* remember for next launch */
+  /* The recycle bin (/.sdtrash) is an internal folder: never show it in the
+   * normal browser (even with Show hidden ON) — it is reached only via the
+   * Trash action — so the user can't accidentally file orphans into it. */
+  if (g_n > 0 && at_root()) {
+    const char* tname = base_name(TRASH_DIR);
+    for (int i = 0; i < g_n; i++)
+      if (!strcmp(g_entries[i].name, tname)) {
+        for (int j = i; j < g_n - 1; j++) g_entries[j] = g_entries[j + 1];
+        g_n--;
+        break;
+      }
+  }
+  /* remember the folder for next launch — but never the trash itself */
+  if (r >= 0 && !under_trash(g_cwd)) strcpy(g_set.last_dir, g_cwd);
   fsop_sort(g_entries, g_n, g_sortkey, g_sortrev);
   uint64_t f = 0, t = 0;
   g_free_ok = (fsop_freespace(g_cwd, &f, &t) == FR_OK);
@@ -463,7 +484,10 @@ static bool do_mkdir(void) {
   return true;
 }
 
+static bool do_trash(const FsEntry* e);   /* recycle-bin move, defined below */
+
 static bool do_delete(const FsEntry* e) {
+  if (g_set.delete_to_trash) return do_trash(e);   /* recycle bin: move, don't erase */
   /* nb/l1 hold a UTF-8 name truncated to N cols -> up to ~4N bytes; size for the worst case. */
   char np[PATH_MAX], l1[128], nb[128];
   if (!path_join(g_cwd, e->name, np)) { msg_screen("Path too long", UI_WARN, NULL); return false; }
@@ -500,7 +524,9 @@ static bool do_rename(const FsEntry* e) {
 /* Reserved temp marker for the overwrite safe-swap. Paste refuses any item
  * whose name contains it, so a sidecar can never collide with a batch item. */
 #define SIDECAR_MARK ".sdbtmp~"
-static bool is_reserved(const char* name) { return strstr(name, SIDECAR_MARK) != NULL; }
+static bool is_reserved(const char* name) {
+  return strstr(name, SIDECAR_MARK) != NULL || strstr(name, TRASH_SIDE) != NULL;
+}
 
 static bool sidecar_name(const char* path, char* out) {
   if ((unsigned)strlen(path) + 12 >= PATH_MAX) return false;  /* room for SIDECAR_MARK + NN */
@@ -567,6 +593,10 @@ static bool into_itself(const char* src, const char* dst) {
 
 static bool do_paste(void) {
   if (g_clip_op == CLIP_NONE || g_clip_count == 0) return false;
+  if (under_trash(g_cwd)) {                    /* never paste into the recycle bin */
+    msg_screen("Reserved folder", UI_WARN, "Cannot paste into the Trash");
+    return false;
+  }
   if (!strcmp(g_clip_dir, g_cwd)) {           /* pasting onto the items themselves */
     msg_screen("Already here", UI_WARN, "Paste into a different folder");
     return false;
@@ -678,6 +708,329 @@ static bool do_duplicate(const FsEntry* e) {
   return true;
 }
 
+/* ---- recycle bin (Trash) — Omega-only ----------------------------------- */
+/*
+ * Delete moves an item into TRASH_DIR instead of erasing it; Restore moves it
+ * back to where it came from. The move is a same-volume f_rename (atomic, no
+ * data copy — a trashed folder is just re-linked), so trashing/restoring even a
+ * huge tree is instant and never duplicates bytes. Each trashed item "stored"
+ * gets a sidecar file "<stored>.origin~" inside TRASH_DIR holding its original
+ * full path, written BEFORE the move so a mid-op failure leaves at most a
+ * harmless orphan sidecar (never a trashed item we can't trace).
+ */
+
+static int EWRAM_BSS g_trash_map[FS_MAX];   /* visible trash rows -> g_entries idx */
+
+/* True if `path` is TRASH_DIR itself or sits inside it. */
+static bool under_trash(const char* path) {
+  static const char td[] = TRASH_DIR;
+  unsigned tl = sizeof(td) - 1;
+  if (strncmp(path, td, tl) != 0) return false;
+  return path[tl] == 0 || path[tl] == '/';
+}
+
+/* Create TRASH_DIR if absent and mark it hidden+system (best-effort). */
+static bool ensure_trash_dir(void) {
+  FILINFO fno;
+  if (f_stat(TRASH_DIR, &fno) == FR_OK) return (fno.fattrib & AM_DIR) != 0;
+  FRESULT fr = fsop_mkdir(TRASH_DIR);
+  if (fr != FR_OK && fr != FR_EXIST) return false;
+  fsop_chmod(TRASH_DIR, AM_HID | AM_SYS, AM_HID | AM_SYS);   /* keep it out of normal listings */
+  return true;
+}
+
+/* "<TRASH_DIR>/<stored><TRASH_SIDE>" into out (PATH_MAX). */
+static bool sidecar_path(const char* stored, char* out) {
+  if (!path_join(TRASH_DIR, stored, out)) return false;
+  if (strlen(out) + strlen(TRASH_SIDE) + 1 > PATH_MAX) return false;
+  strcat(out, TRASH_SIDE);
+  return true;
+}
+
+/* True if `name` is an origin sidecar (ends with TRASH_SIDE). */
+static bool is_origin_sidecar(const char* name) {
+  int nl = (int)strlen(name), sl = (int)strlen(TRASH_SIDE);
+  return nl >= sl && !strcmp(name + nl - sl, TRASH_SIDE);
+}
+
+/* Pick a stored name in TRASH_DIR that is free AND whose sidecar is free, so
+ * two same-named items from different folders can both be trashed. */
+static bool trash_free_name(const char* base, char* out) {
+  char p[PATH_MAX], sp[PATH_MAX];
+  FILINFO fno;
+  for (int i = 1; i <= 999; i++) {
+    if (i == 1) sniprintf(out, FS_NAME_CAP, "%s", base);
+    else        sniprintf(out, FS_NAME_CAP, "%s (%d)", base, i);
+    if (!path_join(TRASH_DIR, out, p)) return false;
+    if (f_stat(p, &fno) == FR_OK) continue;            /* stored name taken */
+    if (!sidecar_path(out, sp)) return false;
+    if (f_stat(sp, &fno) == FR_OK) continue;           /* sidecar name taken */
+    return true;
+  }
+  return false;
+}
+
+/* Write the original path of a trashed item into its sidecar. */
+static FRESULT write_origin(const char* stored, const char* origpath) {
+  char sp[PATH_MAX];
+  if (!sidecar_path(stored, sp)) return FR_NOT_ENOUGH_CORE;
+  FIL f;
+  FRESULT fr = f_open(&f, sp, FA_WRITE | FA_CREATE_ALWAYS);
+  if (fr != FR_OK) return fr;
+  UINT bw = 0; int len = (int)strlen(origpath);
+  fr = f_write(&f, origpath, (UINT)len, &bw);
+  FRESULT fc = f_close(&f);
+  if (fr == FR_OK) fr = fc;
+  if (fr == FR_OK && bw != (UINT)len) fr = FR_DENIED;
+  if (fr != FR_OK) f_unlink(sp);
+  return fr;
+}
+
+/* Read a trashed item's original path from its sidecar (NUL-terminated, CR/LF
+ * stripped). Returns true only on a plausible absolute path. */
+static bool read_origin(const char* stored, char* out) {
+  char sp[PATH_MAX];
+  if (!sidecar_path(stored, sp)) return false;
+  FIL f;
+  if (f_open(&f, sp, FA_READ) != FR_OK) return false;
+  UINT br = 0;
+  FRESULT fr = f_read(&f, out, PATH_MAX - 1, &br);
+  f_close(&f);
+  if (fr != FR_OK) return false;
+  out[br] = 0;
+  int n = (int)strlen(out);
+  while (n > 0 && (out[n - 1] == '\n' || out[n - 1] == '\r' || out[n - 1] == ' ')) out[--n] = 0;
+  return n > 0 && out[0] == '/';
+}
+
+/* Move `src` into the trash, recording its origin. */
+static FRESULT do_trash_path(const char* src) {
+  if (under_trash(src)) return FR_INVALID_NAME;      /* don't re-trash the trash */
+  if (is_reserved(base_name(src)))                   /* a name in our reserved temp/origin namespace */
+    return FR_INVALID_NAME;                          /* would hide in the trash view — refuse (mirrors paste) */
+  if (!ensure_trash_dir()) return FR_DENIED;
+  char stored[FS_NAME_CAP], dst[PATH_MAX], sp[PATH_MAX];
+  if (!trash_free_name(base_name(src), stored)) return FR_NOT_ENOUGH_CORE;
+  FRESULT fr = write_origin(stored, src);            /* origin first */
+  if (fr != FR_OK) return fr;
+  if (!path_join(TRASH_DIR, stored, dst)) {
+    if (sidecar_path(stored, sp)) f_unlink(sp);
+    return FR_NOT_ENOUGH_CORE;
+  }
+  fr = fsop_rename(src, dst);
+  if (fr == FR_DENIED) {                              /* clear read-only and retry once */
+    f_chmod(src, 0, AM_RDO);
+    fr = fsop_rename(src, dst);
+  }
+  if (fr != FR_OK) { if (sidecar_path(stored, sp)) f_unlink(sp); return fr; }   /* undo sidecar */
+  return FR_OK;
+}
+
+/* Confirm + move the selected entry to the trash (the do_delete default). */
+static bool do_trash(const FsEntry* e) {
+  char np[PATH_MAX], l1[128], nb[128];
+  if (!path_join(g_cwd, e->name, np)) { msg_screen("Path too long", UI_WARN, NULL); return false; }
+  if (g_set.confirm_delete) {
+    ui_truncate(nb, e->name, 20);
+    siprintf(l1, "Move %s to Trash?", nb);
+    if (!confirm(l1, "Restore it later from Trash")) return false;
+  }
+  show_msg("Moving to Trash...", e->name);
+  FRESULT fr = do_trash_path(np);
+  log_line("trash %s -> %d (%s)", np, fr, fr_str(fr));
+  log_flush_to_sd(LOG_PATH);
+  if (fr == FR_INVALID_NAME) { msg_screen("Can't trash this", UI_WARN, "reserved/system item - use Delete (perm)"); return false; }
+  if (fr != FR_OK) { msg_screen("Trash failed", UI_WARN, fr_str(fr)); return false; }
+  return true;
+}
+
+/* Where to restore a trashed item: its origin path if its parent still exists,
+ * else the volume root; auto-suffixed "(restored[ N])" so an existing file at
+ * the destination is never overwritten. *to_root flags the root fallback. */
+static bool restore_dest(const char* origpath, char* out, bool* to_root) {
+  char parent[PATH_MAX];
+  parent_of(origpath, parent);
+  FILINFO fno;
+  bool parent_ok = (parent[0] == '/' && parent[1] == 0) ||
+                   (f_stat(parent, &fno) == FR_OK && (fno.fattrib & AM_DIR));
+  *to_root = !parent_ok;
+  const char* dir = parent_ok ? parent : "/";
+  const char* base = base_name(origpath);
+  const char* dot = strrchr(base, '.');
+  int blen = (dot && dot != base) ? (int)(dot - base) : (int)strlen(base);
+  const char* ext = (dot && dot != base) ? dot : "";
+  char nm[FS_NAME_CAP], cand[FS_NAME_CAP];
+  if (blen > (int)sizeof(nm) - 1) blen = (int)sizeof(nm) - 1;
+  memcpy(nm, base, (size_t)blen); nm[blen] = 0;
+  for (int i = 0; i <= 99; i++) {
+    if (i == 0)      sniprintf(cand, sizeof(cand), "%s%s", nm, ext);
+    else if (i == 1) sniprintf(cand, sizeof(cand), "%s (restored)%s", nm, ext);
+    else             sniprintf(cand, sizeof(cand), "%s (restored %d)%s", nm, i, ext);
+    if (!path_join(dir, cand, out)) return false;
+    if (f_stat(out, &fno) != FR_OK) return true;       /* free */
+  }
+  return false;
+}
+
+/* Restore the trashed item `stored` to its origin (or root). */
+static bool do_restore(const char* stored) {
+  char origin[PATH_MAX], src[PATH_MAX], dst[PATH_MAX], sp[PATH_MAX];
+  if (!read_origin(stored, origin)) { msg_screen("No origin info", UI_WARN, "Move it out manually"); return false; }
+  if (!path_join(TRASH_DIR, stored, src)) { msg_screen("Path too long", UI_WARN, NULL); return false; }
+  bool to_root = false;
+  if (!restore_dest(origin, dst, &to_root)) { msg_screen("Cannot place", UI_WARN, "name too long"); return false; }
+  show_msg("Restoring...", stored);
+  FRESULT fr = fsop_rename(src, dst);
+  log_line("restore %s -> %s : %d (%s)", src, dst, fr, fr_str(fr));
+  if (fr != FR_OK) { log_flush_to_sd(LOG_PATH); msg_screen("Restore failed", UI_WARN, fr_str(fr)); return false; }
+  if (sidecar_path(stored, sp)) f_unlink(sp);          /* origin no longer needed */
+  log_flush_to_sd(LOG_PATH);
+  char nb[128]; ui_truncate(nb, dst, 28);
+  msg_screen(to_root ? "Restored to root" : "Restored", UI_OK, nb);
+  return true;
+}
+
+/* Permanently delete one trashed item + its sidecar (no further undo). */
+static bool do_purge(const char* stored) {
+  char p[PATH_MAX], sp[PATH_MAX];
+  if (!path_join(TRASH_DIR, stored, p)) return false;
+  FRESULT fr = fsop_delete(p);
+  if (sidecar_path(stored, sp)) f_unlink(sp);
+  log_line("purge %s -> %d (%s)", p, fr, fr_str(fr));
+  log_flush_to_sd(LOG_PATH);
+  if (fr != FR_OK && fr != FR_NO_FILE && fr != FR_NO_PATH) {
+    msg_screen("Delete failed", UI_WARN, fr_str(fr)); return false;
+  }
+  return true;
+}
+
+/* Empty the whole trash (recursive). */
+static bool trash_empty(void) {
+  FILINFO fno;
+  if (f_stat(TRASH_DIR, &fno) != FR_OK) return true;   /* nothing there */
+  FRESULT fr = fsop_delete(TRASH_DIR);
+  log_line("empty trash -> %d (%s)", fr, fr_str(fr));
+  log_flush_to_sd(LOG_PATH);
+  if (fr != FR_OK && fr != FR_NO_FILE && fr != FR_NO_PATH) {
+    msg_screen("Empty failed", UI_WARN, fr_str(fr)); return false;
+  }
+  return true;
+}
+
+/* Build g_trash_map[] = the g_entries rows that are real trashed items (skip the
+ * .origin~ sidecars). Returns the visible count. */
+static int trash_visible(void) {
+  int v = 0;
+  for (int i = 0; i < g_n; i++)
+    if (!is_origin_sidecar(g_entries[i].name)) g_trash_map[v++] = i;
+  return v;
+}
+
+/* Re-list TRASH_DIR into g_entries (newest first). Returns the visible count. */
+static int trash_scan(void) {
+  int r = fsop_list(TRASH_DIR, g_entries, FS_MAX, &g_trunc, true);  /* show hidden trashed items too */
+  g_n = (r < 0) ? 0 : r;
+  fsop_sort(g_entries, g_n, FS_SORT_DATE, true);
+  return trash_visible();
+}
+
+/* The Trash viewer: browse trashed items, Restore or permanently Delete each,
+ * or Empty the whole bin. Clobbers g_entries (the browser is re-listed by the
+ * caller on return). Returns true so the browser always refreshes. */
+static bool trash_modal(void) {
+  int vis = trash_scan();
+  if (vis == 0) { msg_screen("Trash is empty", UI_DIM, "Deleted items appear here"); return true; }
+
+  const int ROWS = LIST_ROWS;
+  int sel = 0, top = 0;
+  bool dirty = true;
+  while (1) {
+    if (sel >= vis) sel = vis - 1;
+    if (sel < 0) sel = 0;
+    if (sel < top) top = sel;
+    if (sel >= top + ROWS) top = sel - ROWS + 1;
+    if (top < 0) top = 0;
+
+    if (dirty) {
+      ui_clear();
+      char hdr[48];
+      siprintf(hdr, "TRASH  (%d item%s)", vis, vis == 1 ? "" : "s");
+      ui_text(2, HDR_Y, UI_TITLE, hdr);
+      ui_panel(0, BOX_Y, 240, BOX_H, UI_PANEL, UI_BORDER);
+      for (int rr = 0; rr < ROWS; rr++) {
+        int row = top + rr;
+        if (row >= vis) break;
+        FsEntry* e = &g_entries[g_trash_map[row]];
+        int y = ROW0_Y + rr * ROW_H;
+        char line[128], nbuf[128];
+        if (e->is_dir) {
+          ui_truncate(nbuf, e->name, 20);
+          siprintf(line, "%-20s    <DIR>", nbuf);
+        } else {
+          char szb[16]; human_size(e->size, szb);
+          ui_truncate(nbuf, e->name, 16);
+          siprintf(line, "%-15s %9s", nbuf, szb);
+        }
+        ui_text_sel(3, y, 234, row == sel, e->is_dir ? UI_DIRCLR : UI_SAVECLR, line);
+      }
+      /* detail: where the highlighted item came from */
+      FsEntry* se = &g_entries[g_trash_map[sel]];
+      char origin[PATH_MAX], db[128];
+      if (read_origin(se->name, origin)) {
+        ui_truncate(db, origin, 29);
+        ui_text(2, DETAIL_NAME_Y, UI_SELTEXT, db);
+        ui_text(2, DETAIL_META_Y, UI_DIM, "original location");
+      } else {
+        ui_text(2, DETAIL_NAME_Y, UI_DIM, "(origin unknown)");
+      }
+      ui_text(2, STATUS_Y, UI_DIM, "A: restore/delete   SELECT: empty");
+      ui_text(2, FOOT_Y, UI_DIM, "B = back");
+      dirty = false;
+    }
+
+    vsync();
+    u16 mv  = key_repeat(KEY_UP | KEY_DOWN);
+    u16 hit = key_hit(KEY_A | KEY_B | KEY_START | KEY_SELECT | KEY_L | KEY_R);
+    if (!mv && !hit) continue;
+    dirty = true;
+
+    if (hit & KEY_B) return true;
+    else if (mv & KEY_DOWN) { if (vis) sel = (sel + 1) % vis; }
+    else if (mv & KEY_UP)   { if (vis) sel = (sel == 0) ? vis - 1 : sel - 1; }
+    else if (hit & KEY_L)   { sel -= ROWS; if (sel < 0) sel = 0; }
+    else if (hit & KEY_R)   { sel += ROWS; if (sel >= vis) sel = vis - 1; }
+    else if (hit & KEY_SELECT) {
+      if (confirm("Empty Trash?", "Permanently erases ALL items")) {
+        if (trash_empty()) return true;                /* gone -> back to browser */
+        vis = trash_visible();                         /* failed: refresh count */
+      }
+    }
+    else if (hit & (KEY_A | KEY_START)) {
+      FsEntry* se = &g_entries[g_trash_map[sel]];
+      char stored[FS_NAME_CAP];
+      strcpy(stored, se->name);
+      char origin[PATH_MAX], nb[128], ob[128];
+      ui_clear();
+      ui_text(6, 36, UI_TITLE, "TRASHED ITEM");
+      ui_truncate(nb, stored, 28);
+      ui_text(6, 56, UI_TEXT, nb);
+      if (read_origin(stored, origin)) { ui_truncate(ob, origin, 29); ui_text(6, 72, UI_DIM, ob); }
+      ui_text(6, 98,  UI_OK,   "A = Restore");
+      ui_text(6, 112, UI_WARN, "START = Delete forever");
+      ui_text(6, 130, UI_DIM,  "B = cancel");
+      u16 k = wait_keys(KEY_A | KEY_START | KEY_B);
+      bool acted = false;
+      if (k & KEY_A) acted = do_restore(stored);
+      else if (k & KEY_START) { if (confirm("Delete forever?", "This cannot be undone")) acted = do_purge(stored); }
+      if (acted) {
+        vis = trash_scan();
+        if (vis == 0) { msg_screen("Trash is empty", UI_DIM, "All items handled"); return true; }
+        if (sel >= vis) sel = vis - 1;
+      }
+    }
+  }
+}
+
 /* Recursively total a folder's bytes + file/subfolder counts and show them.
  * Read-only — works on both carts. Returns false (no listing change). */
 static bool do_foldersize(const FsEntry* e) {
@@ -713,7 +1066,7 @@ static bool do_foldersize(const FsEntry* e) {
  * CFG_PATH (Omega-only). Returns true if the listing must be re-read (sort or
  * show-hidden changed); false means a plain repaint suffices. */
 static bool settings_menu(void) {
-  enum { S_THEME, S_SORT, S_HIDDEN, S_CONFDEL, S_VIEWER,
+  enum { S_THEME, S_SORT, S_HIDDEN, S_CONFDEL, S_TRASH, S_VIEWER,
          S_JUMP, S_KDELAY, S_KSPEED, S_FREE, S_RESET, S_COUNT };
   Settings snap = g_set;             /* snapshot for B = cancel/revert */
   u16 saved_mask = ui_get_repeat_mask();
@@ -724,7 +1077,7 @@ static bool settings_menu(void) {
     if (dirty) {
       ui_clear();
       ui_text(2, HDR_Y, UI_TITLE, "SETTINGS");
-      ui_panel(0, 12, 240, 126, UI_PANEL, UI_BORDER);
+      ui_panel(0, 12, 240, 132, UI_PANEL, UI_BORDER);
       char row[64];
       for (int i = 0; i < S_COUNT; i++) {
         switch (i) {
@@ -732,6 +1085,7 @@ static bool settings_menu(void) {
           case S_SORT:    siprintf(row, "Sort:         %s", sort_label_of(g_set.sort_key, g_set.sort_rev)); break;
           case S_HIDDEN:  siprintf(row, "Show hidden:  %s", g_set.show_hidden ? "ON" : "off"); break;
           case S_CONFDEL: siprintf(row, "Confirm del:  %s", g_set.confirm_delete ? "ON" : "off"); break;
+          case S_TRASH:   siprintf(row, "Delete to:    %s", g_set.delete_to_trash ? "Trash" : "Permanent"); break;
           case S_VIEWER:  siprintf(row, "Open files:   %s", g_set.viewer_hex ? "Hex" : "Text"); break;
           case S_JUMP:    siprintf(row, "L/R jump:     %d rows", g_set.jump); break;
           case S_KDELAY:  siprintf(row, "Key delay:    %d frames", g_set.key_delay); break;
@@ -767,9 +1121,10 @@ static bool settings_menu(void) {
                         theme_apply(g_set.theme); break;          /* live preview */
         case S_SORT: {  int s = (g_set.sort_key * 2 + (g_set.sort_rev ? 1 : 0) + 6 + d) % 6;
                         g_set.sort_key = s / 2; g_set.sort_rev = (s & 1) != 0; break; }
-        case S_HIDDEN:  g_set.show_hidden    = !g_set.show_hidden;    break;
-        case S_CONFDEL: g_set.confirm_delete = !g_set.confirm_delete; break;
-        case S_VIEWER:  g_set.viewer_hex     = !g_set.viewer_hex;     break;
+        case S_HIDDEN:  g_set.show_hidden     = !g_set.show_hidden;     break;
+        case S_CONFDEL: g_set.confirm_delete  = !g_set.confirm_delete;  break;
+        case S_TRASH:   g_set.delete_to_trash = !g_set.delete_to_trash; break;
+        case S_VIEWER:  g_set.viewer_hex      = !g_set.viewer_hex;      break;
         case S_JUMP:    g_set.jump      = clampi(g_set.jump + d, 1, 99);    break;
         case S_KDELAY:  g_set.key_delay = clampi(g_set.key_delay + d, 2, 60); break;
         case S_KSPEED:  g_set.key_speed = clampi(g_set.key_speed + d, 1, 30); break;
@@ -917,9 +1272,10 @@ static bool find_modal(void) {
  * are reachable even on an empty directory / the [..] row. */
 static bool actions_menu(const FsEntry* e) {
   enum { A_OPEN, A_VIEW, A_INFO, A_FOLDERSIZE, A_FIND, A_RENAME, A_COPY, A_CUT, A_DUPLICATE,
-         A_PASTE, A_RDO, A_HID, A_DELETE, A_NEWFILE, A_MKDIR, A_SELECT, A_SETTINGS, A_REBOOT };
-  int  ids[20];
-  char labels[20][32];
+         A_PASTE, A_RDO, A_HID, A_DELETE, A_NEWFILE, A_MKDIR, A_SELECT, A_TRASH,
+         A_SETTINGS, A_REBOOT };
+  int  ids[24];
+  char labels[24][32];
   int  ni = 0;
 
   if (e) {
@@ -945,17 +1301,21 @@ static bool actions_menu(const FsEntry* e) {
     if (e) {
       ids[ni] = A_RDO; siprintf(labels[ni++], "Read-only: %s", (e->attrib & AM_RDO) ? "ON" : "off");
       ids[ni] = A_HID; siprintf(labels[ni++], "Hidden: %s",    (e->attrib & AM_HID) ? "ON" : "off");
-      ids[ni] = A_DELETE; strcpy(labels[ni++], e->is_dir ? "Delete folder" : "Delete file");
+      ids[ni] = A_DELETE;
+      strcpy(labels[ni++], g_set.delete_to_trash
+               ? (e->is_dir ? "Move folder to Trash" : "Move file to Trash")
+               : (e->is_dir ? "Delete folder (perm)" : "Delete file (perm)"));
     }
     ids[ni] = A_NEWFILE; strcpy(labels[ni++], "New file here");
     ids[ni] = A_MKDIR;   strcpy(labels[ni++], "New folder here");
     ids[ni] = A_SELECT;  strcpy(labels[ni++], "Select multiple");
+    ids[ni] = A_TRASH;   strcpy(labels[ni++], "Trash (recycle bin)...");
   }
   /* always available, both carts (settings persist Omega-only) */
   ids[ni] = A_SETTINGS; strcpy(labels[ni++], "Settings...");
   ids[ni] = A_REBOOT;   strcpy(labels[ni++], "Reboot to loader...");
 
-  /* The list can hold up to 17 items (ids[20] cap) but the panel fits 9; scroll
+  /* The list can hold up to ~19 items (ids[24] cap) but the panel fits 9; scroll
    * a sel/top window like the browser list so rows never spill past the box. */
   const int VIS = 9, ROW0 = 18, PITCH = 12;
   int sel = 0, top = 0;
@@ -1025,6 +1385,7 @@ static bool actions_menu(const FsEntry* e) {
         case A_NEWFILE:    if (do_newfile())            return true; break;
         case A_MKDIR:      if (do_mkdir())              return true; break;
         case A_SELECT:     g_selmode = true; memset(g_marked, 0, sizeof(g_marked)); return false;
+        case A_TRASH:      return trash_modal();    /* restore/purge/empty the recycle bin */
         case A_SETTINGS:   return settings_menu();  /* true only if sort/hidden changed */
         case A_REBOOT:     do_reboot();     break;  /* returns only if cancelled */
       }
@@ -1427,23 +1788,24 @@ static int capture_marked(ClipOp op) {
 }
 
 static bool do_delete_marked(int count) {
+  bool trash = g_set.delete_to_trash;
   if (g_set.confirm_delete) {
     char l1[40];
-    siprintf(l1, "Delete %d items?", count);
-    if (!confirm(l1, "Folders include all contents")) return false;
+    siprintf(l1, trash ? "Trash %d items?" : "Delete %d items?", count);
+    if (!confirm(l1, trash ? "Restore later from Trash" : "Folders include all contents")) return false;
   }
-  show_msg("Deleting...", "marked items");
+  show_msg(trash ? "Moving to Trash..." : "Deleting...", "marked items");
   int ok = 0, fail = 0;
   for (int i = 0; i < g_n; i++) {
     if (!g_marked[i]) continue;
     char p[PATH_MAX];
     if (!path_join(g_cwd, g_entries[i].name, p)) { fail++; continue; }
-    FRESULT fr = fsop_delete(p);
-    log_line("batch delete %s : %d", p, fr);
+    FRESULT fr = trash ? do_trash_path(p) : fsop_delete(p);
+    log_line("batch %s %s : %d", trash ? "trash" : "delete", p, fr);
     if (fr == FR_OK) ok++; else fail++;
   }
   log_flush_to_sd(LOG_PATH);
-  if (fail) { char m[48]; siprintf(m, "%d ok  %d failed", ok, fail); msg_screen("Delete finished", UI_WARN, m); }
+  if (fail) { char m[48]; siprintf(m, "%d ok  %d failed", ok, fail); msg_screen(trash ? "Trash finished" : "Delete finished", UI_WARN, m); }
   return ok > 0;
 }
 
@@ -1494,7 +1856,7 @@ static bool batch_menu(int count) {
   char labels[5][24];
   siprintf(labels[ni], "Copy %d", count);   ids[ni++] = B_COPY;
   siprintf(labels[ni], "Cut %d", count);    ids[ni++] = B_CUT;
-  siprintf(labels[ni], "Delete %d", count); ids[ni++] = B_DELETE;
+  siprintf(labels[ni], g_set.delete_to_trash ? "Trash %d" : "Delete %d", count); ids[ni++] = B_DELETE;
   if (count == 2) { strcpy(labels[ni], "Swap names"); ids[ni++] = B_SWAP; }
   strcpy(labels[ni], "Cancel");             ids[ni++] = B_CANCEL;
 
@@ -1611,7 +1973,10 @@ static void run_browser(void) {
         if (!at_root()) { path_up(); rescan(); sel = 0; top = 0; }
       } else if (e->is_dir) {
         char np[PATH_MAX];
-        if (path_join(g_cwd, e->name, np)) { strcpy(g_cwd, np); rescan(); sel = 0; top = 0; }
+        if (path_join(g_cwd, e->name, np)) {
+          if (under_trash(np)) msg_screen("Reserved folder", UI_DIM, "Use the Trash action");  /* never browse the bin */
+          else { strcpy(g_cwd, np); rescan(); sel = 0; top = 0; }
+        }
       } else {
         if (actions_menu(e)) { rescan(); apply_find_sel(&sel, &top); }   /* file -> actions menu */
       }
@@ -1675,7 +2040,7 @@ int main(void) {
   key_repeat_limits(g_set.key_delay, g_set.key_speed);
   log_line("cfg: theme=%d sort=%d/%d hidden=%d last_dir='%s'",
            g_set.theme, g_set.sort_key, g_set.sort_rev, g_set.show_hidden, g_set.last_dir);
-  if (g_set.last_dir[0] == '/') {
+  if (g_set.last_dir[0] == '/' && !under_trash(g_set.last_dir)) {   /* never reopen inside the bin */
     DIR d;
     if (f_opendir(&d, g_set.last_dir) == FR_OK) { f_closedir(&d); strcpy(g_cwd, g_set.last_dir); }
   }

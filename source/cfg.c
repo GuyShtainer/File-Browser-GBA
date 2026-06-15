@@ -24,6 +24,7 @@ void cfg_defaults(void) {
   g_set.viewer_hex = true;
   g_set.show_hidden = false;
   g_set.confirm_delete = true;
+  g_set.delete_to_trash = true;
   g_set.jump = 11;
   g_set.key_delay = 16;
   g_set.key_speed = 4;
@@ -81,6 +82,7 @@ void cfg_load(const char* path) {
     else if (!strcmp(key, "viewer_hex"))     g_set.viewer_hex = (val[0] == '1');
     else if (!strcmp(key, "show_hidden"))    g_set.show_hidden = (val[0] == '1');
     else if (!strcmp(key, "confirm_delete")) g_set.confirm_delete = (val[0] == '1');
+    else if (!strcmp(key, "delete_to_trash")) g_set.delete_to_trash = (val[0] == '1');
     else if (!strcmp(key, "jump"))           g_set.jump = clampi(to_int(val), 1, 99);
     else if (!strcmp(key, "key_delay"))      g_set.key_delay = clampi(to_int(val), 2, 60);
     else if (!strcmp(key, "key_speed"))      g_set.key_speed = clampi(to_int(val), 1, 30);
@@ -98,9 +100,11 @@ bool cfg_save(const char* path) {
   int n = sniprintf(out, sizeof(out),    /* bounded: last_dir is up to 255 B */
     "[sdbrowse]\n"
     "theme=%d\nsort_key=%d\nsort_rev=%d\nviewer_hex=%d\nshow_hidden=%d\n"
-    "confirm_delete=%d\njump=%d\nkey_delay=%d\nkey_speed=%d\nfree_unit=%d\nlast_dir=%s\n",
+    "confirm_delete=%d\ndelete_to_trash=%d\njump=%d\nkey_delay=%d\nkey_speed=%d\n"
+    "free_unit=%d\nlast_dir=%s\n",
     g_set.theme, g_set.sort_key, g_set.sort_rev ? 1 : 0, g_set.viewer_hex ? 1 : 0,
-    g_set.show_hidden ? 1 : 0, g_set.confirm_delete ? 1 : 0, g_set.jump,
+    g_set.show_hidden ? 1 : 0, g_set.confirm_delete ? 1 : 0,
+    g_set.delete_to_trash ? 1 : 0, g_set.jump,
     g_set.key_delay, g_set.key_speed, g_set.free_unit, g_set.last_dir);
   if (n <= 0) return false;
   FIL f;
