@@ -1,9 +1,9 @@
-# sd-browser — release status
+# File-Browser-GBA — release status
 
 **Status: FEATURE-COMPLETE (Phases 0–7), release candidate. Builds clean (zero
 warnings). The one remaining gate is the hardware sign-off.**
 
-`sd_browser.gba` — ROM ~130 KB, IWRAM ~11.9 KB / 32 KB, EWRAM well within 256 KB.
+`file_browser_gba.gba` — ROM ~130 KB, IWRAM ~11.9 KB / 32 KB, EWRAM well within 256 KB.
 
 **Self-contained:** the shared hardware/FS layer (flashcartio, FatFs, the
 per-cart block drivers, the cartridge RTC and the logger) is vendored into

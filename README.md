@@ -1,12 +1,9 @@
-# sd-browser — GBA SD file browser
+# File-Browser-GBA — GBA SD file browser
 
 A **cartridge-native microSD file manager for the Game Boy Advance** — it runs
 *on the GBA itself* (EZ-Flash Omega DE, EverDrive GBA X5) and browses, copies,
 moves, renames, deletes (with a **recycle bin**), and hex-edits the files on your
 flashcart's microSD card. No PC, no DS — just the handheld.
-
-> **Project name:** `sd-browser` is a working title. See
-> [a more distinctive name is being picked](#a-note-on-the-name) below.
 
 ## Status
 
@@ -258,7 +255,7 @@ Or, with a local devkitPro `gba-dev` environment, from this directory:
 make rebuild
 ```
 
-Output: `sd_browser.gba` (ROM title `SDBROWSE`). Copy it to the flashcart's SD
+Output: `file_browser_gba.gba` (ROM title `FILEBRWSGBA`). Copy it to the flashcart's SD
 card and launch it like any other GBA ROM.
 
 This repository is **self-contained**: the shared hardware/filesystem layer
@@ -269,7 +266,7 @@ mounts this folder and `make` finds everything locally — no external checkout.
 ## Layout
 
 ```
-sd-browser/
+File-Browser-GBA/
   Makefile          # devkitARM/libtonc build; auto-globs source/ + lib/
   build.sh          # Docker build (mounts this folder; no toolchain needed)
   LICENSE           # GPLv3 (this project)
@@ -339,11 +336,12 @@ sponsored by** Nintendo, EZ-Flash, or Krikzz/EverDrive. "Game Boy Advance",
 only to describe compatibility. The project **ships no copyrighted content** —
 bring your own files. Use it at your own risk and back up your microSD card.
 
-## A note on the name
+## Prior art
 
-`sd-browser` is a placeholder. A search of GitHub, GBAtemp and the wider homebrew
-scene found **no general-purpose, cartridge-resident GBA file manager** in
-open source (the closest is the read-only `gba-flashcartio` demo and the
-Supercard firmware menus), so the namespace is wide open — a more distinctive
-name is being chosen. Candidate directions: **advance-files / advancefiler /
-cart-files / agb-filer / flashfiles / romwalker**.
+A search of GitHub, GBAtemp and the wider homebrew scene found **no
+general-purpose, cartridge-resident GBA file manager** in open source — the
+closest is the read-only `gba-flashcartio` demo, the Supercard firmware menus
+(SuperFW / SCFW), and the old "GBA Filer" homebrew. Everything else that browses
+files (GodMode9i, TWiLightMenu, FlashGBX, …) runs on the DS/3DS or a PC, not on
+the GBA itself. **File-Browser-GBA** fills that gap: a polished file manager that
+runs on the Game Boy Advance.

@@ -1,5 +1,5 @@
 #
-# Makefile for sd-browser (GBA SD file browser).
+# Makefile for File-Browser-GBA (GBA SD file browser).
 # Self-contained: the shared hardware/FS layer (flashcartio, FatFs, the EZ-Flash
 # Omega + EverDrive block drivers, the cartridge RTC and the logger) is VENDORED
 # into ./lib and ./source, so this tool builds standalone with no repo-root
@@ -75,8 +75,8 @@ export PATH := $(DEVKITARM)/bin:$(PATH)
 
 # === PROJECT DETAILS =================================================
 
-export PROJ := sd_browser
-TITLE       := SDBROWSE
+export PROJ := file_browser_gba
+TITLE       := FILEBRWSGBA
 
 LIBS        := -ltonc
 

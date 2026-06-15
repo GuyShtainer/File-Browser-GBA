@@ -7,10 +7,10 @@ build/
 *.d
 *.i
 # (-save-temps output; bTEMPS=1)
-sd_browser.s
-sd_browser.gba
-sd_browser.elf
-sd_browser.map
+file_browser_gba.s
+file_browser_gba.gba
+file_browser_gba.elf
+file_browser_gba.map
 
 # --- runtime files the tool writes to the microSD (never the repo) ---
 sdbrowse_log.txt

@@ -1,5 +1,5 @@
 /*
- * SD File Browser (sd-browser) — a GBA-native microSD file manager.
+ * SD File Browser (File-Browser-GBA) — a GBA-native microSD file manager.
  *
  * Runs on BOTH EZ-Flash Omega DE and EverDrive GBA X5 (read works on both).
  * Browse/sort, inspect properties, view+hex-edit files; write ops (rename, copy/
@@ -2015,7 +2015,7 @@ int main(void) {
   g_cwd[0] = '/'; g_cwd[1] = 0;
 
   log_init();
-  log_line("=== SD File Browser (sd-browser, Phase 0) ===");
+  log_line("=== SD File Browser (File-Browser-GBA, Phase 0) ===");
   log_line("mGBA debug log: %s", log_under_mgba() ? "active" : "absent");
 
   show_msg("Detecting flashcart...", NULL);
