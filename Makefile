@@ -1,8 +1,9 @@
 #
 # Makefile for sd-browser (GBA SD file browser).
-# A tool in the gba-toolkit family: pulls the shared hardware/FS layer from the
-# repo root (../../lib, ../../source) and adds only this tool's source/.
-# Adapted from the repo-root Makefile (afska/gba-flashcartio tonc template).
+# Self-contained: the shared hardware/FS layer (flashcartio, FatFs, the EZ-Flash
+# Omega + EverDrive block drivers, the cartridge RTC and the logger) is VENDORED
+# into ./lib and ./source, so this tool builds standalone with no repo-root
+# checkout. Adapted from the repo-root Makefile (afska/gba-flashcartio tonc template).
 #
 
 # === SETUP ===========================================================
@@ -80,13 +81,13 @@ TITLE       := SDBROWSE
 LIBS        := -ltonc
 
 BUILD       := build
-# Shared toolkit dirs are referenced from the repo root via ../../ ; the tool's
-# own code lives in ./source. Globbing + VPATH are computed in the first make
-# pass (CURDIR == this dir), so the relative paths resolve correctly.
-SHAREDDIRS  := ../../source ../../lib ../../lib/fatfs ../../lib/ezflashomega ../../lib/everdrivegbax5
-SRCDIRS     := source $(SHAREDDIRS)
+# All sources are local (vendored): ./source holds this tool's UI/logic plus the
+# shared single-file modules (gba_rtc, log); ./lib holds flashcartio + FatFs +
+# the per-cart block drivers. The Makefile auto-globs these, so new .c files
+# need no edit here.
+SRCDIRS     := source lib lib/fatfs lib/ezflashomega lib/everdrivegbax5
 DATADIRS    := data
-INCDIRS     := source $(SHAREDDIRS)
+INCDIRS     := source lib lib/fatfs lib/ezflashomega lib/everdrivegbax5
 LIBDIRS     := $(TONCLIB)
 
 # --- switches ---
