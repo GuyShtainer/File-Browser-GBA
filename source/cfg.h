@@ -17,6 +17,7 @@ typedef struct {
   bool show_hidden;     /* list AM_HID entries                    */
   bool confirm_delete;  /* prompt before delete (default true)    */
   bool delete_to_trash; /* delete moves to /.sdtrash (default true) */
+  int  trash_days;      /* auto-delete trashed items older than N days; 0 = off */
   int  jump;            /* LEFT/RIGHT jump distance in rows       */
   int  key_delay;       /* key_repeat_limits arg 1 (frames)       */
   int  key_speed;       /* key_repeat_limits arg 2 (frames)       */

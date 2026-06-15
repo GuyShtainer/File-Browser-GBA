@@ -1,18 +1,19 @@
 # File-Browser-GBA — CONSOLIDATED MASTER HARDWARE SIGN-OFF
 
-> **STATUS (2026-06-15): P0–P6 are HARDWARE-VALIDATED.** The developer ran the
-> whole tool — browsing and every write op — on a **Game Boy Advance SP + EZ-Flash
-> Omega DE** (there were no emulator runs); everything works. The **only** item
-> still open is the new **Phase 7 recycle bin (Trash), B45–B50** — not yet run on
-> the cartridge. The B1–B44 list below is retained as the per-item record; treat
-> B1–B44 as PASS unless a specific regression is found. (EverDrive GBA X5 stays
-> read-only; its reboot-to-loader path is the one other unproven detail.)
+> **STATUS (2026-06-15): P0–P7 are HARDWARE-VALIDATED — including the recycle bin
+> (Trash).** The developer ran the whole tool — browsing and every write op, plus
+> Trash move/restore/empty (B45–B50) — on a **Game Boy Advance SP + EZ-Flash Omega
+> DE** (there were no emulator runs); everything works. Treat **B1–B50 as PASS**
+> unless a specific regression is found. The **one new item still to check** is
+> **B51 — auto-clear old trash** (added after the pass; opt-in, fails safe).
+> (EverDrive GBA X5 stays read-only; its reboot-to-loader path is the one other
+> unproven detail.)
 
 The gate for calling the whole tool **done**. Supersedes the per-phase list in
 `HARDWARE-TEST-PHASE1.md`. SD log path is `/file_browser_gba_log.txt` (card root, flushed
-after every op). The Phase-7 **Trash** path (B45–B50) is the remaining real-hardware
-gate; B1–B44 were observed on a real **EZ-Flash Omega DE** (with the EverDrive read-only
-check and the original-Omega caveat as noted).
+after every op). B1–B50 (P0–P7, including Trash) were observed on a real **EZ-Flash
+Omega DE** (with the EverDrive read-only check and the original-Omega caveat as noted);
+the only item added since is **B51 — auto-clear old trash**.
 
 ## What the emulator CANNOT prove (a green mGBA build proves none of this)
 - The entire SD write path: `f_mkdir`/`f_unlink`/`f_chmod`/`f_rename`/`f_open(write)`
@@ -515,3 +516,23 @@ path is not emulated. Set **Settings → Delete mode = Trash** for B45–B49.
 - That a restored file/folder is **byte-identical** to the original: spot-check a
   restored file in the hex viewer, or compare on a PC.
 - That **free space** really tracks moves vs. copies (an emulator's FS may differ).
+
+---
+
+# Phase 7 addendum — Auto-clear old trash  → B51  (write, Omega-only)
+
+Opt-in setting (**Settings → Auto-clear**, default *Off*, 1–365 days). At launch
+it permanently deletes trashed items whose age (from the `.origin~` sidecar's RTC
+date) exceeds the chosen number of days. It fails safe: with *Off*, or if the cart
+RTC is unreadable, it deletes nothing.
+
+## (P7-7) Auto-clear purges only old-enough trash  → B51
+- [ ] Precondition: needs a working cart RTC (the Omega DE exposes it). Set
+      **Auto-clear = 1 day**. Trash an item, power-cycle the SAME day → on relaunch
+      it is **still in Trash** (less than 1 day old).
+- [ ] Set the RTC (or wait) so a trashed item is ≥ the threshold old, relaunch →
+      that item is **gone** from Trash, and the SD log shows
+      `trash autoclean: purged N item(s)`. Newer items remain.
+- [ ] Set **Auto-clear = Off** → nothing is ever auto-deleted, regardless of age.
+- [ ] Sanity: it only ever removes items inside `/.sdtrash` (no file outside the
+      bin is touched). PASS / FAIL / NOTES: ______________________________

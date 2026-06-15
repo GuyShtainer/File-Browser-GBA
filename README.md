@@ -7,21 +7,17 @@ flashcart's microSD card. No PC, no DS — just the handheld.
 
 ## Status
 
-**Hardware-validated and in daily use.** The whole tool — browsing and every
-write feature (new file/folder, rename/move, copy/cut/paste, duplicate, delete,
-attributes, the verified hex editor, settings, reboot-to-loader) — was developed
-and tested directly on a **Game Boy Advance SP with an EZ-Flash Omega DE**, and
-it works. There were **no emulator runs** — it ran on the cartridge from the
-start. Builds clean (zero warnings).
+**Hardware-validated.** The whole tool — browsing and every write feature
+(new file/folder, rename/move, copy/cut/paste, duplicate, delete + the **recycle
+bin**, attributes, the verified hex editor, settings, reboot-to-loader) — was
+developed and tested directly on a **Game Boy Advance SP with an EZ-Flash Omega
+DE**, and it works. There were **no emulator runs** — it ran on the cartridge
+from the start. Builds clean (zero warnings).
 
-> **The one exception:** the brand-new **recycle bin (Trash)** has **not been
-> hardware-tested yet** — it's the only open item
-> ([issue #1](https://github.com/GuyShtainer/File-Browser-GBA/issues/1)). Because
-> *Delete mode = Trash* is the default, the default delete path is the untested
-> one; switch **Delete mode = Permanent** in Settings for the long-proven
-> behaviour, or help validate Trash. Either way **back up your microSD** before
-> bulk deletes — EZ-Flash writes don't retry. The EverDrive GBA X5 runs as a
-> read-only browser (its write path isn't wired).
+> **Back up your microSD before bulk deletes** — EZ-Flash writes don't retry.
+> With the default *Delete mode = Trash* the recycle bin is your undo; a
+> *permanent* delete has none. The EverDrive GBA X5 runs as a read-only browser
+> (its write path isn't wired).
 
 **Phase 0 (read-only browser)** — runs on **both** carts; validated on real hardware:
 
@@ -88,7 +84,8 @@ menu (always present on **both** carts):
   change the value (numeric rows auto-repeat on hold), **A** saves, **B** cancels
   and reverts. The settings: **theme**, **sort** (key + direction),
   **show hidden** files, **confirm before delete**, **delete mode**
-  (Trash / Permanent — see the recycle bin below), **default file viewer**
+  (Trash / Permanent — see the recycle bin below), **auto-clear** (auto-delete
+  trash older than N days, or Off), **default file viewer**
   (Hex/Text), **L/R jump distance**, **key-repeat delay**, **key-repeat speed**,
   **free-space unit** (B/KB/MB/GB), and **Reset to defaults** (L/R on that row;
   keeps the remembered folder).
@@ -96,15 +93,11 @@ menu (always present on **both** carts):
   Light high-contrast scheme. The theme previews live as you cycle it.
 - **Remembers the last folder** — reopens it on next launch (falls back to root
   if it no longer exists).
-- **Reboot to loader** *(experimental)* — soft-reboot toward the cart's loader
-  menu (EZ-Flash kernel / EverDrive OS) instead of power-cycling. Confirmed
-  working on the EZ-Flash Omega DE; the EverDrive path is still being validated.
-  Writes no data either way.
+- **Reboot to loader** — soft-reboot back to the cart's loader menu (EZ-Flash
+  kernel) instead of power-cycling. **Confirmed working on the EZ-Flash Omega
+  DE.** Writes no data. (The EverDrive path is less tested.)
 
-**Recycle bin / Trash (Phase 7, Omega-only)** — `Delete` doesn't have to erase.
-*(This is the one feature **not yet hardware-tested** — see Status /
-[issue #1](https://github.com/GuyShtainer/File-Browser-GBA/issues/1). It's
-data-safety reviewed and builds clean, but hasn't been run on the cartridge.)*
+**Recycle bin / Trash (Phase 7, Omega-only)** — `Delete` doesn't have to erase:
 
 - **Move to Trash** — with **Delete mode = Trash** (the default), deleting a file
   or folder **moves** it into a hidden `/.sdtrash` recycle bin instead of erasing
@@ -123,6 +116,11 @@ data-safety reviewed and builds clean, but hasn't been run on the cartridge.)*
   with *Show hidden* on) and reached only through the Trash action, so you can't
   accidentally file things into it. Batch delete (multi-select) honours the same
   Trash/Permanent mode.
+- **Auto-clear old trash** — a Settings option (**Auto-clear**, *Off* by default,
+  1–365 days) automatically deletes trashed items older than the chosen number of
+  days, checked once at launch. Age is measured from when the item was trashed
+  (the cart RTC). It is purely opt-in and *fails safe*: if the setting is Off or
+  the RTC isn't readable, nothing is ever auto-deleted.
 
 **More file operations** — added to the actions / batch / viewer:
 
@@ -312,10 +310,9 @@ File-Browser-GBA/
   can be host-compiled.
 
 **Anything touching the SD write path, the RTC, or user data is not "done" until
-real-hardware sign-off** — the SD path is not emulated. That sign-off is **done
-for everything except the new Trash feature** (developed and tested on a GBA SP +
-EZ-Flash Omega DE); Trash is the one path still to verify. See
-[HARDWARE-SIGNOFF.md](HARDWARE-SIGNOFF.md).
+real-hardware sign-off** — the SD path is not emulated. That sign-off is **done**:
+the whole tool, including the recycle bin, was developed and tested on a GBA SP +
+EZ-Flash Omega DE. See [HARDWARE-SIGNOFF.md](HARDWARE-SIGNOFF.md).
 
 ## License
 

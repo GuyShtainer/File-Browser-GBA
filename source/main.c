@@ -34,6 +34,7 @@
 #include "fs_ops.h"
 #include "osk.h"
 #include "cfg.h"
+#include "gba_rtc.h"
 
 #define LOG_PATH  "/file_browser_gba_log.txt"
 #define CFG_PATH  "/file_browser_gba.cfg"
@@ -917,6 +918,54 @@ static bool trash_empty(void) {
   return true;
 }
 
+/* Days since 1970-01-01 for a Y/M/D (Howard Hinnant's civil-to-days). */
+static long days_from_civil(int y, int m, int d) {
+  y -= (m <= 2);
+  long era = (y >= 0 ? y : y - 399) / 400;
+  long yoe = y - era * 400;
+  long doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + doe - 719468;
+}
+
+/* Auto-delete trashed items older than `days` (Omega-only). "Age" comes from the
+ * origin sidecar's date — FatFs stamps it with the RTC at the moment of trashing
+ * (the trashed item itself keeps its original mtime through the move). SKIPS
+ * everything if days<=0, no RTC is readable, or an item has no trash date, so a
+ * missing/unset clock can NEVER trigger a deletion. Runs once at startup. */
+static void trash_autoclean(int days) {
+  if (days <= 0 || !can_write()) return;
+  FILINFO fno;
+  if (f_stat(TRASH_DIR, &fno) != FR_OK) return;          /* no bin */
+  GbaRtcTime now;
+  if (!gba_rtc_get(&now) || now.year < 2000) return;     /* no reliable clock -> never delete */
+  long today = days_from_civil((int)now.year, (int)now.month, (int)now.day);
+
+  int r = fsop_list(TRASH_DIR, g_entries, FS_MAX, &g_trunc, true);
+  int n = (r < 0) ? 0 : r, removed = 0;
+  for (int i = 0; i < n; i++) {
+    if (is_origin_sidecar(g_entries[i].name)) continue;
+    char sp[PATH_MAX]; FILINFO sf;
+    if (!sidecar_path(g_entries[i].name, sp)) continue;
+    if (f_stat(sp, &sf) != FR_OK || sf.fdate == 0) continue;   /* unknown age -> keep (safe) */
+    int ty = (int)((sf.fdate >> 9) & 0x7F) + 1980;
+    int tm = (int)((sf.fdate >> 5) & 0x0F);
+    int td = (int)(sf.fdate & 0x1F);
+    if (tm < 1 || tm > 12 || td < 1 || td > 31) continue;       /* corrupt date -> keep */
+    if (today - days_from_civil(ty, tm, td) < (long)days) continue;  /* not old enough */
+    char p[PATH_MAX];
+    if (path_join(TRASH_DIR, g_entries[i].name, p) && fsop_delete(p) == FR_OK) {
+      f_unlink(sp);
+      removed++;
+    }
+  }
+  if (removed) {
+    log_line("trash autoclean: purged %d item(s) older than %d day(s)", removed, days);
+    log_flush_to_sd(LOG_PATH);
+  }
+  g_n = 0;   /* g_entries was clobbered by the trash scan; run_browser re-lists */
+}
+
 /* Build g_trash_map[] = the g_entries rows that are real trashed items (skip the
  * .origin~ sidecars). Returns the visible count. */
 static int trash_visible(void) {
@@ -1066,7 +1115,7 @@ static bool do_foldersize(const FsEntry* e) {
  * CFG_PATH (Omega-only). Returns true if the listing must be re-read (sort or
  * show-hidden changed); false means a plain repaint suffices. */
 static bool settings_menu(void) {
-  enum { S_THEME, S_SORT, S_HIDDEN, S_CONFDEL, S_TRASH, S_VIEWER,
+  enum { S_THEME, S_SORT, S_HIDDEN, S_CONFDEL, S_TRASH, S_TRASHDAYS, S_VIEWER,
          S_JUMP, S_KDELAY, S_KSPEED, S_FREE, S_RESET, S_COUNT };
   Settings snap = g_set;             /* snapshot for B = cancel/revert */
   u16 saved_mask = ui_get_repeat_mask();
@@ -1077,7 +1126,7 @@ static bool settings_menu(void) {
     if (dirty) {
       ui_clear();
       ui_text(2, HDR_Y, UI_TITLE, "SETTINGS");
-      ui_panel(0, 12, 240, 132, UI_PANEL, UI_BORDER);
+      ui_panel(0, 12, 240, 136, UI_PANEL, UI_BORDER);
       char row[64];
       for (int i = 0; i < S_COUNT; i++) {
         switch (i) {
@@ -1086,6 +1135,10 @@ static bool settings_menu(void) {
           case S_HIDDEN:  siprintf(row, "Show hidden:  %s", g_set.show_hidden ? "ON" : "off"); break;
           case S_CONFDEL: siprintf(row, "Confirm del:  %s", g_set.confirm_delete ? "ON" : "off"); break;
           case S_TRASH:   siprintf(row, "Delete to:    %s", g_set.delete_to_trash ? "Trash" : "Permanent"); break;
+          case S_TRASHDAYS:
+            if (g_set.trash_days <= 0) siprintf(row, "Auto-clear:   Off");
+            else siprintf(row, "Auto-clear:   %d day%s", g_set.trash_days, g_set.trash_days == 1 ? "" : "s");
+            break;
           case S_VIEWER:  siprintf(row, "Open files:   %s", g_set.viewer_hex ? "Hex" : "Text"); break;
           case S_JUMP:    siprintf(row, "L/R jump:     %d rows", g_set.jump); break;
           case S_KDELAY:  siprintf(row, "Key delay:    %d frames", g_set.key_delay); break;
@@ -1093,7 +1146,7 @@ static bool settings_menu(void) {
           case S_FREE:    siprintf(row, "Free space:   %s", free_unit_name(g_set.free_unit)); break;
           case S_RESET:   siprintf(row, "Reset to defaults   (L/R)"); break;
         }
-        ui_text_sel(4, 16 + i * 12, 232, i == sel, UI_TEXT, row);
+        ui_text_sel(4, 15 + i * 11, 232, i == sel, UI_TEXT, row);
       }
       ui_text(2, FOOT_Y, UI_DIM, "UD pick LR chg A save B back");
       dirty = false;
@@ -1103,7 +1156,7 @@ static bool settings_menu(void) {
      * Numeric rows (jump / key timings) auto-repeat on a held L/R; the theme,
      * sort and on/off toggles step once per press so they don't whip past the
      * target value. */
-    bool numeric = (sel == S_JUMP || sel == S_KDELAY || sel == S_KSPEED);
+    bool numeric = (sel == S_TRASHDAYS || sel == S_JUMP || sel == S_KDELAY || sel == S_KSPEED);
     u16 rep = key_repeat(KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT);
     u16 hit = key_hit(KEY_A | KEY_B | KEY_START | KEY_LEFT | KEY_RIGHT);
     u16 nav = rep & (KEY_UP | KEY_DOWN);
@@ -1124,6 +1177,7 @@ static bool settings_menu(void) {
         case S_HIDDEN:  g_set.show_hidden     = !g_set.show_hidden;     break;
         case S_CONFDEL: g_set.confirm_delete  = !g_set.confirm_delete;  break;
         case S_TRASH:   g_set.delete_to_trash = !g_set.delete_to_trash; break;
+        case S_TRASHDAYS: g_set.trash_days    = clampi(g_set.trash_days + d, 0, 365); break;
         case S_VIEWER:  g_set.viewer_hex      = !g_set.viewer_hex;      break;
         case S_JUMP:    g_set.jump      = clampi(g_set.jump + d, 1, 99);    break;
         case S_KDELAY:  g_set.key_delay = clampi(g_set.key_delay + d, 2, 60); break;
@@ -1154,13 +1208,12 @@ static bool settings_menu(void) {
   return need_rescan;
 }
 
-/* Reboot toward the flashcart loader/menu. Experimental: may land on the menu
- * or just restart the tool (see flashcartio_reboot). No data risk — invoked
- * only while idle and the tool keeps no unsaved SRAM. Persists settings first
- * so a successful reboot keeps the last folder + preferences. Does not return
- * on success. */
+/* Reboot back to the flashcart loader/menu (confirmed working on the EZ-Flash
+ * Omega DE; see flashcartio_reboot). No data risk — invoked only while idle and
+ * the tool keeps no unsaved SRAM. Persists settings first so the reboot keeps the
+ * last folder + preferences. Does not return on success. */
 static void do_reboot(void) {
-  if (!confirm("Reboot to loader?", "Experimental - may just restart")) return;
+  if (!confirm("Reboot to loader?", "Return to the flashcart menu")) return;
   strcpy(g_set.last_dir, g_cwd);
   if (can_write()) cfg_save(CFG_PATH);
   show_msg("Rebooting...", NULL);
@@ -1282,9 +1335,9 @@ static bool actions_menu(const FsEntry* e) {
     if (!e->is_dir) {
       const OpenEntry* op = opener_for(e->name);          /* type-specific viewer, if any */
       if (op) { ids[ni] = A_OPEN; strcpy(labels[ni++], op->label); }
-      ids[ni] = A_VIEW; strcpy(labels[ni++], "View (hex/text)");
     }
-    ids[ni] = A_INFO; strcpy(labels[ni++], "Info / properties");
+    ids[ni] = A_INFO; strcpy(labels[ni++], "Info / properties");   /* info sits above the hex/text viewer */
+    if (!e->is_dir) { ids[ni] = A_VIEW; strcpy(labels[ni++], "View (hex/text)"); }
     if (e->is_dir) { ids[ni] = A_FOLDERSIZE; strcpy(labels[ni++], "Folder size"); }
   }
   ids[ni] = A_FIND; strcpy(labels[ni++], "Find...");   /* recursive search, both carts */
@@ -2044,6 +2097,8 @@ int main(void) {
     DIR d;
     if (f_opendir(&d, g_set.last_dir) == FR_OK) { f_closedir(&d); strcpy(g_cwd, g_set.last_dir); }
   }
+
+  trash_autoclean(g_set.trash_days);   /* purge stale trashed items (Omega + RTC + setting on) */
 
   run_browser();
   return 0;

@@ -1,8 +1,8 @@
 # File-Browser-GBA — release status
 
-**Status: HARDWARE-VALIDATED on a Game Boy Advance SP + EZ-Flash Omega DE.
-Everything works on the real cartridge EXCEPT the brand-new recycle bin (Trash),
-which is the only feature not yet hardware-tested. Builds clean (zero warnings).**
+**Status: HARDWARE-VALIDATED on a Game Boy Advance SP + EZ-Flash Omega DE — the
+whole tool, including the recycle bin (Trash), works on the real cartridge.
+Builds clean (zero warnings).**
 
 `file_browser_gba.gba` — ROM ~130 KB, IWRAM ~11.9 KB / 32 KB, EWRAM well within 256 KB.
 
@@ -13,16 +13,18 @@ rebuild` with a local devkitARM) with no external checkout.
 
 ## Validated on real hardware (GBA SP + EZ-Flash Omega DE)
 - **Tested on the actual cartridge — there were ZERO emulator runs.** Every read
-  AND write feature in P0–P6 has been exercised on a Game Boy Advance SP with an
+  AND write feature (P0–P7) has been exercised on a Game Boy Advance SP with an
   EZ-Flash Omega DE and works: browsing / sort / search / properties / free-space
   / viewers, new file+folder, rename/move, copy/cut/paste (incl. recursive folder
   copy), duplicate, delete, attribute toggles, the verified hex editor, settings
-  persistence + last-folder + themes, and reboot-to-loader. The EverDrive GBA X5
+  persistence + last-folder + themes, reboot-to-loader, and the **recycle bin
+  (Trash): move-to-trash, restore, delete-forever, empty**. The EverDrive GBA X5
   runs read-only.
-- **Only the new recycle bin (Trash, P7) is NOT yet hardware-tested** — see the
-  Remaining gate below. Because *Delete mode = Trash* is the default, the default
-  delete path is the one open item; *Delete mode = Permanent* is the long-proven
-  behaviour.
+- **New since validation: auto-clear old trash** (Settings → *Auto-clear*, Off by
+  default, 1–365 days). Purges trashed items older than N days at launch, dated
+  from the origin sidecar (cart RTC). Opt-in and fails safe — does nothing if Off
+  or the RTC isn't readable. (This new code path is the only thing added after the
+  hardware pass; worth a quick check on the cart.)
 - **Features complete** — P0 read-only browser (nav/sort/properties/free-space/
   hex+text viewer); P1 on-screen keyboard + mkdir/delete/attributes; P2
   rename/move + copy/cut/paste (incl. recursive folder copy) + multi-select
@@ -53,15 +55,14 @@ rebuild` with a local devkitARM) with no external checkout.
   name of 4-byte codepoints could exceed an on-screen-string buffer); all
   truncation chains now sized for the `~4·max_cols` worst case. Rebuilt clean.
 
-## Remaining gate — only the recycle bin (Trash)
-Everything else has been observed on real hardware. The **Trash** feature (P7,
-items **B45–B50** in [HARDWARE-SIGNOFF.md](HARDWARE-SIGNOFF.md)) is the one path
-that has not been run on the cartridge yet. The SD write path is not emulated and
-EZ-Flash writes do not retry, so Trash isn't called "done" until a real Omega DE
-move/restore/empty is observed. Tracked in
-[issue #1](https://github.com/GuyShtainer/File-Browser-GBA/issues/1).
-**Back up the microSD before bulk Trash testing** — or use *Delete mode =
-Permanent* for the long-proven delete.
+## No remaining gate — only watch the new auto-clear option
+The full feature set (P0–P7, including Trash) has been observed on a real
+EZ-Flash Omega DE. The only code added *after* that hardware pass is the opt-in
+**Auto-clear old trash** option — it fails safe (does nothing if Off or the RTC
+is unreadable), but since it deletes automatically, give it a quick check on the
+cart with a short day count (items B51 in
+[HARDWARE-SIGNOFF.md](HARDWARE-SIGNOFF.md)). **Back up the microSD before bulk
+deletes** as a general habit — EZ-Flash writes don't retry.
 
 Open caveats: original (non-DE) Omega unproven; >2 TB exFAT untested; RTC
-exposure is per-cart.
+exposure is per-cart (auto-clear needs the RTC).
