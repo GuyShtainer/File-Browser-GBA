@@ -1,5 +1,28 @@
+# --- build artifacts ---
 build/
 *.elf
 *.gba
 *.map
+*.o
+*.d
+*.i
+# (-save-temps output; bTEMPS=1)
+sd_browser.s
+sd_browser.gba
+sd_browser.elf
+sd_browser.map
+
+# --- runtime files the tool writes to the microSD (never the repo) ---
+sdbrowse_log.txt
+sdbrowse.cfg
+
+# --- copyrighted / personal data: never commit (bring your own) ---
 *.sav
+*.sav*
+*.ss*
+*.bin
+*.rom
+*.bios
+
+# --- macOS ---
+.DS_Store
