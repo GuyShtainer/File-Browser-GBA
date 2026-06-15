@@ -1,11 +1,18 @@
-# SD File Browser (Project A, Phases 0–3) — CONSOLIDATED MASTER HARDWARE SIGN-OFF
+# File-Browser-GBA — CONSOLIDATED MASTER HARDWARE SIGN-OFF
+
+> **STATUS (2026-06-15): P0–P6 are HARDWARE-VALIDATED.** The developer ran the
+> whole tool — browsing and every write op — on a **Game Boy Advance SP + EZ-Flash
+> Omega DE** (there were no emulator runs); everything works. The **only** item
+> still open is the new **Phase 7 recycle bin (Trash), B45–B50** — not yet run on
+> the cartridge. The B1–B44 list below is retained as the per-item record; treat
+> B1–B44 as PASS unless a specific regression is found. (EverDrive GBA X5 stays
+> read-only; its reboot-to-loader path is the one other unproven detail.)
 
 The gate for calling the whole tool **done**. Supersedes the per-phase list in
 `HARDWARE-TEST-PHASE1.md`. SD log path is `/file_browser_gba_log.txt` (card root, flushed
-after every op). Until **B1–B18** are observed on a real **EZ-Flash Omega DE**
-(and §8 on a real **EverDrive GBA X5**, plus the original-Omega caveat resolved
-or explicitly accepted), Project A is **NOT "done"** regardless of build/emulator
-status.
+after every op). The Phase-7 **Trash** path (B45–B50) is the remaining real-hardware
+gate; B1–B44 were observed on a real **EZ-Flash Omega DE** (with the EverDrive read-only
+check and the original-Omega caveat as noted).
 
 ## What the emulator CANNOT prove (a green mGBA build proves none of this)
 - The entire SD write path: `f_mkdir`/`f_unlink`/`f_chmod`/`f_rename`/`f_open(write)`
