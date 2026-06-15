@@ -24,5 +24,8 @@ file_browser_gba.cfg
 *.rom
 *.bios
 
+# --- local dev notes (resume doc; kept on disk, not published) ---
+HANDOFF.md
+
 # --- macOS ---
 .DS_Store
