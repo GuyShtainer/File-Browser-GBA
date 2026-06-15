@@ -14,7 +14,7 @@ writes.
 - **EZ-Flash writes have NO retry** (`io_ezfo.c`): one transient hiccup = hard failure.
 - **Delete has no undo and no `.tmp` recovery** — `f_unlink`/`rmtree` destroy data
   immediately. **The SD card backup (step 0) is the only undo.**
-- Every op is logged to **`/sdbrowse_log.txt`** at the card root (flushed after each op).
+- Every op is logged to **`/file_browser_gba_log.txt`** at the card root (flushed after each op).
   Pull the card and read it after every run. mGBA debug logging is a no-op on hardware.
 
 ## Procedure (EZ-Flash Omega DE)
@@ -22,7 +22,7 @@ writes.
 - [ ] **0. Back up the whole microSD first** (full image). Make a **disposable nested
       folder tree** for destructive tests. Note the card's format (FAT32 / exFAT).
 - [ ] **1. Read-only regression:** boots, mounts, browses, shows free/total MB; cart
-      detected as Omega; `/sdbrowse_log.txt` shows `SD mounted OK`.
+      detected as Omega; `/file_browser_gba_log.txt` shows `SD mounted OK`.
 - [ ] **2. mkdir + keyboard:** SELECT → New folder; type via the OSK (A type, B backspace,
       mixed case/digits/`_`/`-`). Verify OSK **rejects** empty, trailing space, trailing
       dot, `.`/`..`, and over-long names (warning bar, START won't dismiss). Folder appears
@@ -51,10 +51,10 @@ writes.
 - [ ] **9. Induced write failure:** trigger a failed op (e.g. mkdir over an existing name, or
       over-deep delete). Confirm an error screen with a readable reason appears (no hang, no
       false success) and the card **still mounts** afterward (no corruption). Failing code is
-      in `/sdbrowse_log.txt`.
+      in `/file_browser_gba_log.txt`.
 - [ ] **10. EverDrive GBA X5:** boot the same ROM; confirm **all write actions are absent**
       (only "Info / properties" + the "Writes need EZ-Flash Omega" hint). Tool is read-only.
-- [ ] **11. After every run:** read `/sdbrowse_log.txt`; mount the card on a PC and confirm
+- [ ] **11. After every run:** read `/file_browser_gba_log.txt`; mount the card on a PC and confirm
       nothing **outside** the targeted paths changed.
 
 ## Emulator CANNOT prove (must be hardware)
@@ -71,7 +71,7 @@ power-cycle.  3. Empty-folder delete.  4. Non-empty tree delete near depth 24 + 
 space reclaimed after remount**.  5. Over-depth/length fails cleanly, card stays mountable.
 6. Read-only file delete via clear-AM_RDO path (incl. read-only items inside a tree).
 7. Read-only + Hidden toggles reflected after rescan.  8. Induced write failure reported,
-card uncorrupted (no-retry path handled).  9. `/sdbrowse_log.txt` written + readable.
+card uncorrupted (no-retry path handled).  9. `/file_browser_gba_log.txt` written + readable.
 10. EverDrive hides writes / read-only.  11. mkdir+delete on the actual card format
 (>2 TB exFAT flagged).  12. RTC state recorded (plausible or "(no timestamp)", no fabricated dates).
 
@@ -109,7 +109,7 @@ real/no-retry and unemulated, so it needs sign-off on a real Omega DE.
       confirm the "RECOVER … name.bak~ / name.hexnew~" message + that the bytes exist there.)
 - [ ] **Re-save** the same file twice; confirm the prior `.bak~` is replaced (single-slot) and
       no stray `.hexnew~` remains after a successful save.
-- [ ] **`/sdbrowse_log.txt`** shows the `hexedit … -> 0 (OK)` line.
+- [ ] **`/file_browser_gba_log.txt`** shows the `hexedit … -> 0 (OK)` line.
 
 **Emulator cannot prove:** the whole edit→verify→backup→swap write path (no-retry EZ-Flash
 writes + renames). **Blocking "done" items:** (1) edited byte correct + rest intact + size

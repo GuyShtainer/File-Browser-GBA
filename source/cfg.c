@@ -1,5 +1,5 @@
 /*
- * INI settings for the SD file browser (/sdbrowse.cfg). GBA-only (FatFs).
+ * INI settings for the SD file browser (/file_browser_gba.cfg). GBA-only (FatFs).
  * Large buffers live in EWRAM (.sbss) so they never sit on the 32 KiB IWRAM
  * stack. Generalized from the record-mixer's app_config.c (one key) to the
  * browser's full Settings struct. Reads work on both carts; writes are
@@ -98,7 +98,7 @@ void cfg_load(const char* path) {
 bool cfg_save(const char* path) {
   static char CFG_EWRAM out[768];
   int n = sniprintf(out, sizeof(out),    /* bounded: last_dir is up to 255 B */
-    "[sdbrowse]\n"
+    "[file_browser_gba]\n"
     "theme=%d\nsort_key=%d\nsort_rev=%d\nviewer_hex=%d\nshow_hidden=%d\n"
     "confirm_delete=%d\ndelete_to_trash=%d\njump=%d\nkey_delay=%d\nkey_speed=%d\n"
     "free_unit=%d\nlast_dir=%s\n",

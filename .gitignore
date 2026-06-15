@@ -13,8 +13,8 @@ file_browser_gba.elf
 file_browser_gba.map
 
 # --- runtime files the tool writes to the microSD (never the repo) ---
-sdbrowse_log.txt
-sdbrowse.cfg
+file_browser_gba_log.txt
+file_browser_gba.cfg
 
 # --- copyrighted / personal data: never commit (bring your own) ---
 *.sav

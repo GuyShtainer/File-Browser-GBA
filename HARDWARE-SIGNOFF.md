@@ -1,7 +1,7 @@
 # SD File Browser (Project A, Phases 0–3) — CONSOLIDATED MASTER HARDWARE SIGN-OFF
 
 The gate for calling the whole tool **done**. Supersedes the per-phase list in
-`HARDWARE-TEST-PHASE1.md`. SD log path is `/sdbrowse_log.txt` (card root, flushed
+`HARDWARE-TEST-PHASE1.md`. SD log path is `/file_browser_gba_log.txt` (card root, flushed
 after every op). Until **B1–B18** are observed on a real **EZ-Flash Omega DE**
 (and §8 on a real **EverDrive GBA X5**, plus the original-Omega caveat resolved
 or explicitly accepted), Project A is **NOT "done"** regardless of build/emulator
@@ -17,7 +17,7 @@ status.
 - **OS-mode stability** across the thousands of back-to-back transfers a deep
   `rmtree` or a multi-MB recursive copy generates.
 - mGBA debug logging is a no-op on hardware — the on-screen buffer and
-  `/sdbrowse_log.txt` are the only evidence.
+  `/file_browser_gba_log.txt` are the only evidence.
 
 ## Blocking items (each must be OBSERVED on a real Omega DE)
 B1 mkdir survives remount · B2 single-file delete + space reclaimed across
@@ -32,7 +32,7 @@ round-trips byte-exact · B12 hex edit: byte correct + rest intact + size preser
 + `.bak~` = exact original · B13 forced verify-fail / disk-full leaves original
 intact, card mountable · B14 rename-fail recovery: original recoverable from
 `.bak~`/`.hexnew~` · B15 induced write failure reported (no hang/false success),
-card still mounts · B16 `/sdbrowse_log.txt` written + readable, every destructive
+card still mounts · B16 `/file_browser_gba_log.txt` written + readable, every destructive
 op present · B17 RTC state recorded (plausible or "no timestamp", never a
 fabricated date) · B18 EverDrive hides ALL write actions / is read-only.
 
@@ -90,7 +90,7 @@ Save = `<name>.hexnew~` → byte-verify → `<name>.bak~` backup → atomic rena
 - [ ] Hex viewer opens; **START does NOT enter EDIT** (read-only).
 
 ## (9) After EVERY run
-- [ ] Read `/sdbrowse_log.txt` (every op + result). → B16
+- [ ] Read `/file_browser_gba_log.txt` (every op + result). → B16
 - [ ] PC mount: nothing outside targeted paths changed; byte-diff every written/edited file vs the backup.
 
 ---
@@ -112,7 +112,7 @@ items below. New blocking items extend the master list: **B19–B30**. Until the
 OBSERVED on a real **EZ-Flash Omega DE** (and the EverDrive items on a real **EverDrive
 GBA X5**), Phase 4 is **NOT "done"** regardless of build/emulator status.
 
-Paths: config `/sdbrowse.cfg` (card root), log `/sdbrowse_log.txt` (card root).
+Paths: config `/file_browser_gba.cfg` (card root), log `/file_browser_gba_log.txt` (card root).
 Source anchors: reboot `lib/flashcartio.c` (`flashcartio_reboot`), `_EZFO_reboot`
 `lib/ezflashomega/io_ezfo.c`, `ed_reboot` `lib/everdrivegbax5/everdrive.c`; cfg
 `projects/sd-browser/source/cfg.c`; gating/flow `projects/sd-browser/source/main.c`
@@ -122,13 +122,13 @@ Source anchors: reboot `lib/flashcartio.c` (`flashcartio_reboot`), `_EZFO_reboot
 B19 Omega DE: "Reboot to loader" lands somewhere RECORDED (kernel menu / tool restart /
 black screen / power-cycle needed) — never an undefined hang · B20 EverDrive: same, on a
 real X5 · B21 reboot reachable + confirm-gated from the idle menu, incl. on an empty root
-(SELECT) · B22 `/sdbrowse.cfg` is written on Omega DE and survives a power-cycle · B23
+(SELECT) · B22 `/file_browser_gba.cfg` is written on Omega DE and survives a power-cycle · B23
 every one of the 9 settings persists across a power-cycle (Omega DE) · B24 theme persists
 across a power-cycle (Omega DE) · B25 last-folder reopen restores a still-existing dir ·
 B26 last-folder FALLBACK: deleted/renamed last_dir → opens at root, card mountable · B27
 show-hidden OFF hides AM_HID|AM_SYS, ON reveals them, after rescan · B28 confirm-delete OFF
 deletes a THROWAWAY file with NO prompt (and the delete is still logged) · B29 EverDrive:
-cfg_save never runs (write-gated) → settings RESET to defaults next launch, no `/sdbrowse.cfg`
+cfg_save never runs (write-gated) → settings RESET to defaults next launch, no `/file_browser_gba.cfg`
 created, no error · B30 jump distance + key-repeat min/max behave as set after a relaunch.
 
 ## (P4-SAFETY) Read this before the reboot tests
@@ -173,10 +173,10 @@ created, no error · B30 jump distance + key-repeat min/max behave as set after 
 - [ ] PASS / FAIL / NOTES: ______________________________
 
 ## (P4-4) Config file written + survives power-cycle — Omega DE  → B22
-- [ ] Precondition: Omega DE; delete any existing `/sdbrowse.cfg` first (clean baseline).
+- [ ] Precondition: Omega DE; delete any existing `/file_browser_gba.cfg` first (clean baseline).
 - [ ] Steps: open Settings, change any value, press A (save). Power off fully, pull card,
       mount on PC.
-- [ ] Expected: `/sdbrowse.cfg` exists, is human-readable INI (`[sdbrowse]` + key=value lines),
+- [ ] Expected: `/file_browser_gba.cfg` exists, is human-readable INI (`[file_browser_gba]` + key=value lines),
       contains the changed value. (Note: cfg_save is a **bare `f_write`, NOT verified-write** —
       see What-mGBA-cannot-prove; eyeball the file content.)
 - [ ] PASS / FAIL / NOTES: ______________________________
@@ -200,7 +200,7 @@ confirm-del ON, viewer Hex, jump 11, key delay 16, key speed 4, free MB.)
 - [ ] Steps: Settings → cycle Theme through all 5 (4 dark + 1 light high-contrast); confirm
       each applies **live** (panel/text/border recolor immediately). Pick the light high-contrast
       one, A to save, power-cycle, relaunch.
-- [ ] Expected: relaunch comes up in the chosen theme (read from `/sdbrowse.cfg`). Also confirm
+- [ ] Expected: relaunch comes up in the chosen theme (read from `/file_browser_gba.cfg`). Also confirm
       **B = cancel reverts** the live preview back to the saved theme.
 - [ ] PASS / FAIL / NOTES: ______________________________
 
@@ -216,7 +216,7 @@ confirm-del ON, viewer Hex, jump 11, key delay 16, key speed 4, free MB.)
       that folder**, return the card, relaunch.
 - [ ] Expected: tool opens at **root `/`** (the `f_opendir` check fails), no hang, card fully
       browsable. (No dedicated log line for the fallback; confirm by the on-screen cwd being root.)
-- [ ] Also: hand-edit `/sdbrowse.cfg` to a relative/garbage `last_dir` (no leading `/`) →
+- [ ] Also: hand-edit `/file_browser_gba.cfg` to a relative/garbage `last_dir` (no leading `/`) →
       expect root (the `last_dir[0]=='/'` guard rejects it).
 - [ ] PASS / FAIL / NOTES: ______________________________
 
@@ -232,7 +232,7 @@ confirm-del ON, viewer Hex, jump 11, key delay 16, key speed 4, free MB.)
 - [ ] **Precondition: a THROWAWAY file you can lose** (created for this test on the backed-up card).
 - [ ] Steps: Settings → Confirm del = off → save. Select the throwaway file → actions → Delete.
 - [ ] Expected: file is deleted **immediately with no confirmation prompt** (gate on
-      `g_set.confirm_delete`). The delete is still recorded in `/sdbrowse_log.txt`. Then set
+      `g_set.confirm_delete`). The delete is still recorded in `/file_browser_gba_log.txt`. Then set
       Confirm del = ON and verify the prompt returns.
 - [ ] PASS / FAIL / NOTES: ______________________________
 
@@ -246,29 +246,29 @@ confirm-del ON, viewer Hex, jump 11, key delay 16, key speed 4, free MB.)
 - [ ] PASS / FAIL / NOTES: ______________________________
 
 ## (P4-12) EverDrive cfg-save is a harmless NO-OP — EverDrive GBA X5  → B29
-- [ ] Precondition: EverDrive X5; ensure NO `/sdbrowse.cfg` on the card to start.
+- [ ] Precondition: EverDrive X5; ensure NO `/file_browser_gba.cfg` on the card to start.
 - [ ] Steps: open Settings, change theme + several values, press A (save). Note: on EverDrive
       `can_write()` is false, so **cfg_save is never even called** — the write is skipped
       entirely, not attempted-and-failed. Power-cycle, relaunch.
 - [ ] Expected: NO error/hang on save; on relaunch **settings are back to DEFAULTS**; pull the
-      card on PC and confirm **`/sdbrowse.cfg` was NOT created**. (Reads still work on both carts:
+      card on PC and confirm **`/file_browser_gba.cfg` was NOT created**. (Reads still work on both carts:
       a cfg from an Omega session will load but cannot be updated here.)
 - [ ] **Verify the claim explicitly:** do EverDrive settings persist? Record the observed answer:
       ☐ reset to defaults (expected) ☐ unexpectedly persisted ☐ other: ______
 - [ ] PASS / FAIL / NOTES: ______________________________
 
 ## (P4-after) After every Phase-4 run
-- [ ] Read `/sdbrowse_log.txt`: the startup `cfg: theme=… last_dir='…'` line is present and
+- [ ] Read `/file_browser_gba_log.txt`: the startup `cfg: theme=… last_dir='…'` line is present and
       matches what you set. **Note:** Settings-menu saves and the Reboot action are NOT
       individually logged (only the startup cfg line + destructive file ops are).
-- [ ] PC-mount: confirm only `/sdbrowse.cfg` (Omega) and `/sdbrowse_log.txt` changed; no other
-      files moved. On EverDrive, confirm `/sdbrowse.cfg` was not created by the tool.
+- [ ] PC-mount: confirm only `/file_browser_gba.cfg` (Omega) and `/file_browser_gba_log.txt` changed; no other
+      files moved. On EverDrive, confirm `/file_browser_gba.cfg` was not created by the tool.
 
 ---
 
 ## What mGBA CANNOT prove (Phase 4)
 A green mGBA build proves none of the following:
-- **The `/sdbrowse.cfg` write path** — `cfg_save` → `f_open(FA_CREATE_ALWAYS|FA_WRITE)` →
+- **The `/file_browser_gba.cfg` write path** — `cfg_save` → `f_open(FA_CREATE_ALWAYS|FA_WRITE)` →
   `f_write` → `_EZFO_writeSectors`. mGBA/melonDS no-op or fake-succeed every SD write, so
   "settings saved" in the emulator means nothing. **Note also this write is a bare `f_write`,
   NOT the toolkit's verified-write (`.tmp` → re-read → rename) pattern, and EZFO writes have no
@@ -281,12 +281,12 @@ A green mGBA build proves none of the following:
 - **Real cart kernel/OS interaction** — whether the EZ-Flash kernel menu and the EverDrive OS
   menu actually receive control (vs. re-launching the same ROM, hanging, or needing a
   power-cycle) is a property of the physical cart firmware, not emulated at all.
-- **Free-space / FAT effects of the cfg + delete** — whether `/sdbrowse.cfg` and the
+- **Free-space / FAT effects of the cfg + delete** — whether `/file_browser_gba.cfg` and the
   confirm-delete-OFF deletion actually commit and survive a power-cycle is invisible to mGBA.
-- **RTC-dated cfg writes** — `/sdbrowse.cfg`'s mtime comes from `get_fattime()`; if the RTC is
+- **RTC-dated cfg writes** — `/file_browser_gba.cfg`'s mtime comes from `get_fattime()`; if the RTC is
   not exposed to this ROM the timestamp will be 0/epoch (expected, per B17). Verify "saved" by
   file content, not timestamp.
-- mGBA debug logging is a no-op on hardware — the on-screen UI and `/sdbrowse_log.txt` are the
+- mGBA debug logging is a no-op on hardware — the on-screen UI and `/file_browser_gba_log.txt` are the
   only evidence; and the Settings/Reboot actions are not logged at all.
 
 ---

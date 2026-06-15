@@ -58,7 +58,7 @@ only on the Omega; the EverDrive stays read-only):
   selection mode. (Copy/Cut feed the same clipboard, so you then navigate and Paste.)
 
 This completes the core file-manager feature set. Every write is confirmed and
-logged to `sdbrowse_log.txt`.
+logged to `file_browser_gba_log.txt`.
 
 **Phase 3 (in progress, Omega-only)** — an in-place **hex editor**. From the hex
 viewer, **START** enters EDIT mode: a white-box cursor marks the editable byte,
@@ -79,7 +79,7 @@ backspaces before it.
 **Phase 4 (settings, themes, reboot)** — quality-of-life, reached from the actions
 menu (always present on **both** carts):
 
-- **Settings menu** with persistent preferences saved to `/sdbrowse.cfg`
+- **Settings menu** with persistent preferences saved to `/file_browser_gba.cfg`
   (written on the Omega only; read on both carts — on the EverDrive settings are
   session-only and reset to defaults next launch). UP/DOWN pick a row, LEFT/RIGHT
   change the value (numeric rows auto-repeat on hold), **A** saves, **B** cancels
@@ -277,7 +277,7 @@ File-Browser-GBA/
     osk.c/.h        # on-screen QWERTY keyboard with a movable caret
     ui.c/.h         # Mode-3 bitmap UI layer
     theme.c/.h      # 5 runtime color themes; UI_* macros read the active theme
-    cfg.c/.h        # /sdbrowse.cfg INI settings (load both carts, save Omega-only)
+    cfg.c/.h        # /file_browser_gba.cfg INI settings (load both carts, save Omega-only)
     gba_rtc.c/.h    # cartridge RTC read (file timestamps)         [vendored shared]
     log.c/.h        # screen + mGBA + SD triple logger              [vendored shared]
   lib/

@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 /* Persistent user settings for the SD file browser. Read on both carts; written
- * Omega-only (best-effort) to /sdbrowse.cfg. Mirrors the record-mixer's
+ * Omega-only (best-effort) to /file_browser_gba.cfg. Mirrors the record-mixer's
  * app_config INI pattern. */
 
 enum { FREE_B = 0, FREE_KB, FREE_MB, FREE_GB, FREE_UNIT_COUNT };

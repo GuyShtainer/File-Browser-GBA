@@ -5,7 +5,7 @@
  * Browse/sort, inspect properties, view+hex-edit files; write ops (rename, copy/
  * cut/paste, duplicate, delete, mkdir, new file, attrs, swap-names, hex save) are
  * EZ-Flash-Omega-only and gated on can_write(). Settings + themes persist to
- * /sdbrowse.cfg (saved Omega-only, read on both).
+ * /file_browser_gba.cfg (saved Omega-only, read on both).
  *
  * Browser keys:
  *   UP/DOWN  move (auto-repeat on hold)
@@ -35,8 +35,8 @@
 #include "osk.h"
 #include "cfg.h"
 
-#define LOG_PATH  "/sdbrowse_log.txt"
-#define CFG_PATH  "/sdbrowse.cfg"
+#define LOG_PATH  "/file_browser_gba_log.txt"
+#define CFG_PATH  "/file_browser_gba.cfg"
 #define FS_MAX    256
 #define PATH_MAX  256
 
