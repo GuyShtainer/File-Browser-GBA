@@ -1,15 +1,27 @@
 # sd-browser — GBA SD file browser
 
-A cartridge-native microSD file manager for the GBA (EZ-Flash Omega DE,
-EverDrive GBA X5), built on the **gba-toolkit** shared layer. Part of the tool
-family described in [`../../docs/ROADMAP.md`](../../docs/ROADMAP.md) (Project A).
+A **cartridge-native microSD file manager for the Game Boy Advance** — it runs
+*on the GBA itself* (EZ-Flash Omega DE, EverDrive GBA X5) and browses, copies,
+moves, renames, deletes (with a **recycle bin**), and hex-edits the files on your
+flashcart's microSD card. No PC, no DS — just the handheld.
+
+> **Project name:** `sd-browser` is a working title. See
+> [a more distinctive name is being picked](#a-note-on-the-name) below.
 
 ## Status
 
-**Code-complete (Phases 0–4), release candidate — builds clean.** The only
-remaining gate is the hardware sign-off (the SD write path and the reboot are
-not emulated). See [RELEASE-STATUS.md](RELEASE-STATUS.md) and the consolidated
-[HARDWARE-SIGNOFF.md](HARDWARE-SIGNOFF.md).
+**Feature-complete, release candidate — builds clean (zero warnings).** Every
+feature works in software; the one remaining gate is the **real-hardware
+sign-off** — the EZ-Flash SD write path and the loader reboot are **not
+emulated**, and EZ-Flash writes do not retry, so write features are not declared
+"done" until observed on real hardware. See [RELEASE-STATUS.md](RELEASE-STATUS.md)
+and the consolidated [HARDWARE-SIGNOFF.md](HARDWARE-SIGNOFF.md).
+
+> **Honesty note:** this is homebrew that writes to your SD card. It uses a
+> verified-write / never-corrupt pipeline throughout, but until the hardware
+> checklist is signed off, **back up your microSD before using the write
+> features.** For `Delete` the recycle bin is your undo; for a permanent delete
+> there is none.
 
 **Phase 0 (read-only browser)** — runs on **both** carts; validated on real hardware:
 
@@ -75,7 +87,8 @@ menu (always present on **both** carts):
   session-only and reset to defaults next launch). UP/DOWN pick a row, LEFT/RIGHT
   change the value (numeric rows auto-repeat on hold), **A** saves, **B** cancels
   and reverts. The settings: **theme**, **sort** (key + direction),
-  **show hidden** files, **confirm before delete**, **default file viewer**
+  **show hidden** files, **confirm before delete**, **delete mode**
+  (Trash / Permanent — see the recycle bin below), **default file viewer**
   (Hex/Text), **L/R jump distance**, **key-repeat delay**, **key-repeat speed**,
   **free-space unit** (B/KB/MB/GB), and **Reset to defaults** (L/R on that row;
   keeps the remembered folder).
@@ -87,6 +100,26 @@ menu (always present on **both** carts):
   menu (EZ-Flash kernel / EverDrive OS) instead of power-cycling. Confirmed
   working on the EZ-Flash Omega DE; the EverDrive path is still being validated.
   Writes no data either way.
+
+**Recycle bin / Trash (Phase 7, Omega-only)** — `Delete` doesn't have to erase:
+
+- **Move to Trash** — with **Delete mode = Trash** (the default), deleting a file
+  or folder **moves** it into a hidden `/.sdtrash` recycle bin instead of erasing
+  it. The move is a same-volume rename — *atomic, instant, and zero-copy* even for
+  a huge folder — so nothing is duplicated and nothing is at risk. Each trashed
+  item records where it came from in a tiny sidecar, so it can be put back. (Set
+  **Delete mode = Permanent** in Settings to erase directly, the old behaviour.)
+- **Restore** — open **Trash (recycle bin)…** from the actions menu, pick an item,
+  and press **A → Restore** to move it back to its original folder. If that folder
+  is gone, it lands at the card root; if a file with the same name now exists,
+  the restore is auto-renamed `name (restored).ext` so it **never overwrites**.
+- **Delete forever / Empty Trash** — in the Trash view, **A → Delete forever**
+  removes one item permanently; **SELECT → Empty Trash** clears the whole bin.
+  These are the only steps that actually erase data, and each asks to confirm.
+- The recycle bin folder is internal — it's hidden from normal browsing (even
+  with *Show hidden* on) and reached only through the Trash action, so you can't
+  accidentally file things into it. Batch delete (multi-select) honours the same
+  Trash/Permanent mode.
 
 **More file operations** — added to the actions / batch / viewer:
 
@@ -123,10 +156,9 @@ its extension, with **View (hex/text)** always available as the fallback:
 
 > **Honest scope:** real **MP3/AAC playback, MP4/H.264 video, and PDF rendering
 > are not feasible** on the GBA's 16.78 MHz CPU (+ the OS-mode SD constraint).
-> The roadmap adds *metadata/info* views (ID3 tags, MP4 codec/resolution, PDF page
-> count) and more image formats (PNG/GIF/JPEG) — see
-> [`../../docs/ROADMAP.md`](../../docs/ROADMAP.md) §A Phase 6. We never pretend to
-> play/render what the hardware can't.
+> Planned instead: *metadata/info* views (ID3 tags, MP4 codec/resolution, PDF page
+> count) and more image formats (PNG/GIF/JPEG). We never pretend to play/render
+> what the hardware can't.
 
 ## Controls
 
@@ -135,7 +167,7 @@ its extension, with **View (hex/text)** always available as the fallback:
 | UP / DOWN | Move cursor (hold to repeat) |
 | LEFT / RIGHT | Jump up / down by the configured distance (default 11 rows) |
 | L / R | Page up / page down (one screen) |
-| A | **Folder:** open it · **File:** open the **actions menu** (a type-specific **Open** e.g. *View image* for `.bmp` / **View** hex-text / Info / **Find…**; **Settings…** and **Reboot to loader…** always; and on Omega: rename / copy / cut / duplicate / paste here / attributes / delete / new file / new folder / select multiple) |
+| A | **Folder:** open it · **File:** open the **actions menu** (a type-specific **Open** e.g. *View image* for `.bmp` / **View** hex-text / Info / **Find…**; **Settings…** and **Reboot to loader…** always; and on Omega: rename / copy / cut / duplicate / paste here / attributes / **delete (→ Trash)** / **Trash (recycle bin)…** / new file / new folder / select multiple) |
 | START | **Any item:** open the **actions menu** (the same menu A opens on a file — **View** lives inside it; this is also how you reach Settings/Reboot/Find when nothing is selected) |
 | B | Up one folder |
 | SELECT | Cycle the sort: 6 states across Name / Size / Date, each ascending and descending. The status bar spells out the active one — "Name A-Z", "Name Z-A", "Size small-big", "Size big-small", "Date old-new", "Date new-old". Folders always sort before files. |
@@ -150,8 +182,17 @@ its extension, with **View (hex/text)** always available as the fallback:
 |-----|--------|
 | A | Mark / unmark the highlighted entry (`*`) |
 | SELECT | Mark all / clear all |
-| START | Batch menu: Copy / Cut / Delete (and **Swap names** when exactly 2 are marked) |
+| START | Batch menu: Copy / Cut / **Trash or Delete** (per delete mode) (and **Swap names** when exactly 2 are marked) |
 | B | Leave selection mode |
+
+### Trash view (from "Trash (recycle bin)…", Omega)
+
+| Key | Action |
+|-----|--------|
+| UP / DOWN | Move through trashed items (hold to repeat); L / R page |
+| A / START | Item menu: **A = Restore** to its original folder · **START = Delete forever** (confirm) |
+| SELECT | **Empty Trash** — permanently erase every item (confirm) |
+| B | Back to the browser |
 
 ### Settings menu
 
@@ -220,39 +261,89 @@ make rebuild
 Output: `sd_browser.gba` (ROM title `SDBROWSE`). Copy it to the flashcart's SD
 card and launch it like any other GBA ROM.
 
-### How the build finds the shared layer
-
-This tool keeps only its own UI/logic in `source/`. The Makefile pulls the
-shared hardware + filesystem layer from the repo root via relative paths
-(`../../lib`, `../../lib/fatfs`, `../../lib/ezflashomega`,
-`../../lib/everdrivegbax5`, and `../../source` for `gba_rtc` + `log`). `build.sh`
-therefore mounts the **repo root** into the container and runs `make` here.
+This repository is **self-contained**: the shared hardware/filesystem layer
+(flashcartio, FatFs, the EZ-Flash Omega + EverDrive block drivers, the cartridge
+RTC and the logger) is vendored into `lib/` and `source/`, so `build.sh` only
+mounts this folder and `make` finds everything locally — no external checkout.
 
 ## Layout
 
 ```
-projects/sd-browser/
-  Makefile        # adapted from the repo root; SRCDIRS/INCDIRS add ../../{lib,source}
-  build.sh        # Docker build (mounts repo root)
+sd-browser/
+  Makefile          # devkitARM/libtonc build; auto-globs source/ + lib/
+  build.sh          # Docker build (mounts this folder; no toolchain needed)
+  LICENSE           # GPLv3 (this project)
+  LICENSE.*         # upstream dependency licenses (see Credits)
   source/
-    main.c        # bring-up + browser UI/state machine; actions/settings/reboot
-    fs_ops.c/.h   # pure-C file ops: list / sort / free-space / copy / delete (host-testable)
-    osk.c/.h      # on-screen QWERTY keyboard with a movable caret
-    ui.c/.h       # Mode-3 bitmap UI layer (vendored from the record-mixer)
-    theme.c/.h    # 5 runtime color themes; UI_* macros read the active g_theme
-    cfg.c/.h      # /sdbrowse.cfg INI settings (load both carts, save Omega-only)
+    main.c          # bring-up + browser UI/state machine; actions/settings/reboot/trash
+    fs_ops.c/.h     # pure-C file ops: list / sort / free-space / copy / delete (host-testable)
+    osk.c/.h        # on-screen QWERTY keyboard with a movable caret
+    ui.c/.h         # Mode-3 bitmap UI layer
+    theme.c/.h      # 5 runtime color themes; UI_* macros read the active theme
+    cfg.c/.h        # /sdbrowse.cfg INI settings (load both carts, save Omega-only)
+    gba_rtc.c/.h    # cartridge RTC read (file timestamps)         [vendored shared]
+    log.c/.h        # screen + mGBA + SD triple logger              [vendored shared]
+  lib/
+    flashcartio*.*  # cart detect + SD sector I/O (Omega DE / EverDrive X5)
+    sys.h
+    fatfs/          # ChaN's FatFs (ff.c, diskio, ffconf, …)
+    ezflashomega/   # io_ezfo block driver
+    everdrivegbax5/ # EverDrive block driver
 ```
 
-## Conventions inherited from the toolkit
+## Design rules (inherited from the gba-toolkit family)
 
-- **Write is Omega-only** (EverDrive write is not wired); Phase 0 is read-only so
-  it runs on both carts. Write features will gate on `active_flashcart == EZ_FLASH_OMEGA`.
-- **OS-mode rule:** the ROM is unmapped during any SD transfer — never render
-  mid-transfer. (Phase 0 only reads via FatFs, which handles this internally.)
-- **No big buffers on the IWRAM stack:** the directory listing lives in
-  `EWRAM_BSS`; `fs_ops` takes caller-owned storage.
-- **Pure-C core:** `fs_ops.c` avoids tonc/GBA headers so it can be host-tested
-  against a FatFs image.
+- **Never corrupt user data.** Every mutating op upholds "never leave the user
+  with neither the old file nor a complete new one": overwrite + hex-save use a
+  verified swap (write temp → byte-compare → `.bak~` backup → atomic rename);
+  delete-to-Trash and Restore are atomic same-volume moves; EZ-Flash writes have
+  **no retry**, so they are always verified.
+- **Write is EZ-Flash-Omega-only** (the EverDrive write path is not wired): all
+  write features gate on `active_flashcart == EZ_FLASH_OMEGA`; the EverDrive runs
+  as a read-only browser.
+- **OS-mode rule:** the game ROM is unmapped during any SD transfer — the code
+  never renders mid-transfer (FatFs handles its own transfers).
+- **No big buffers on the 32 KiB IWRAM stack:** large/static buffers live in
+  `EWRAM_BSS`/`.sbss`.
+- **Pure-C core:** `fs_ops.c` avoids tonc/GBA headers so the list/sort/copy logic
+  can be host-compiled.
 
-Anything touching the SD write path, the RTC, or user data is **not done until
-`hardware-testing-protocol` signs off** — the SD path is not emulated.
+**Anything touching the SD write path, the RTC, or user data is not "done" until
+real-hardware sign-off** — the SD path is not emulated. See
+[HARDWARE-SIGNOFF.md](HARDWARE-SIGNOFF.md).
+
+## License
+
+**GPLv3** — see [LICENSE](LICENSE). Always free and open-source; you may use,
+study, modify and redistribute it, but derivatives must stay GPL (no closed-source
+or proprietary forks).
+
+## Credits
+
+Built on devkitARM + [libtonc](https://github.com/devkitPro/libtonc), and on this
+open-source work — their licenses are included and respected:
+
+- **FatFs** by ChaN — the FAT/exFAT filesystem (BSD-style license, see
+  `lib/fatfs/00readme.txt`).
+- **gba-flashcartio** by Rodrigo Alfonso (afska) — flashcart SD I/O for the
+  EZ-Flash Omega/DE and EverDrive GBA X5 — MIT, see
+  [LICENSE.gba-flashcartio](LICENSE.gba-flashcartio).
+- **EZ-Flash Omega `disc_io`** lineage — Apache-2.0, see
+  [LICENSE.ezfo-disc_io](LICENSE.ezfo-disc_io).
+
+## Disclaimer
+
+This is unofficial homebrew. It is **not affiliated with, endorsed by, or
+sponsored by** Nintendo, EZ-Flash, or Krikzz/EverDrive. "Game Boy Advance",
+"EZ-Flash", and "EverDrive" are trademarks of their respective owners, used here
+only to describe compatibility. The project **ships no copyrighted content** —
+bring your own files. Use it at your own risk and back up your microSD card.
+
+## A note on the name
+
+`sd-browser` is a placeholder. A search of GitHub, GBAtemp and the wider homebrew
+scene found **no general-purpose, cartridge-resident GBA file manager** in
+open source (the closest is the read-only `gba-flashcartio` demo and the
+Supercard firmware menus), so the namespace is wide open — a more distinctive
+name is being chosen. Candidate directions: **advance-files / advancefiler /
+cart-files / agb-filer / flashfiles / romwalker**.

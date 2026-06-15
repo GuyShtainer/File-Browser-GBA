@@ -451,3 +451,60 @@ B42 open-by-extension dispatch · B43 BMP image viewer · B44 word-wrapped text.
       stray `.` for CR, and paragraph breaks render. High/UTF-8 bytes show as `.` (ASCII font).
 - [ ] L/R page + UP/DOWN scroll still work (note: a page boundary may split a line — expected).
 - [ ] PASS / FAIL / NOTES: ______________________________
+
+---
+
+# Phase 7 — Recycle bin (Trash)  → B45–B50
+
+All Trash write paths are **EZ-Flash-Omega-only** and destructive-adjacent, so
+they need real-hardware sign-off. **Back up the microSD first.** The underlying
+ops are atomic same-volume `f_rename` moves (no copy), but the EZ-Flash write
+path is not emulated. Set **Settings → Delete mode = Trash** for B45–B49.
+
+## (P7-1) Move a file to Trash  → B45  (write)
+- [ ] Delete a file (default mode): the prompt says **"Move … to Trash?"**, the file
+      leaves the folder, and free space is essentially unchanged (it moved, not copied).
+- [ ] With **Show hidden = ON**, the root listing still does **NOT** show `/.sdtrash`
+      (it is internal); trying to enter it via any means says "Reserved folder".
+- [ ] PASS / FAIL / NOTES: ______________________________
+
+## (P7-2) Move a whole folder to Trash — instant  → B46  (write)
+- [ ] Trash a LARGE folder (many files / nested): it disappears immediately (no long
+      "copying"), free space barely changes — confirming the zero-copy atomic move.
+- [ ] PASS / FAIL / NOTES: ______________________________
+
+## (P7-3) Restore from Trash — happy path  → B47  (write)
+- [ ] Actions → **Trash (recycle bin)…**, pick the item, **A → Restore**: it returns to
+      its **original folder** with its original name; the Trash entry (and its sidecar)
+      is gone.
+- [ ] Restore a folder too — the whole tree comes back intact.
+- [ ] PASS / FAIL / NOTES: ______________________________
+
+## (P7-4) Restore collision + missing-origin fallback  → B48  (write)
+- [ ] Trash `a.txt`, create a NEW `a.txt` in the same folder, then Restore the trashed
+      one: it comes back as **`a (restored).txt`** (the new file is never overwritten).
+- [ ] Trash a file, DELETE its original folder, then Restore: it lands at the card
+      **root** and the screen says "Restored to root".
+- [ ] PASS / FAIL / NOTES: ______________________________
+
+## (P7-5) Delete forever + Empty Trash  → B49  (write)
+- [ ] In the Trash view, **A → Delete forever** (confirm) removes one item permanently
+      and frees its space.
+- [ ] **SELECT → Empty Trash** (confirm) clears every item; the view then says
+      "Trash is empty". Re-open Trash later — still empty.
+- [ ] PASS / FAIL / NOTES: ______________________________
+
+## (P7-6) Batch + permanent mode + persistence  → B50
+- [ ] Select-multiple → batch **"Trash N"** moves all marked items to the bin at once.
+- [ ] Set **Delete mode = Permanent**: Delete now erases directly (prompt says
+      "(perm)"), with no Trash entry created — and the setting survives a power-cycle.
+- [ ] After trashing then power-cycling, the items are still in Trash and still
+      restorable (the bin and sidecars persist on the card).
+- [ ] PASS / FAIL / NOTES: ______________________________
+
+## What mGBA cannot prove (Phase 7)
+- The EZ-Flash **write/rename path is not emulated** — every move/restore/purge above
+  must be eyeballed on real hardware (B45–B50).
+- That a restored file/folder is **byte-identical** to the original: spot-check a
+  restored file in the hex viewer, or compare on a PC.
+- That **free space** really tracks moves vs. copies (an emulator's FS may differ).
