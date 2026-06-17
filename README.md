@@ -89,8 +89,9 @@ menu (always present on **both** carts):
   (Hex/Text), **L/R jump distance**, **key-repeat delay**, **key-repeat speed**,
   **free-space unit** (B/KB/MB/GB), and **Reset to defaults** (L/R on that row;
   keeps the remembered folder).
-- **5 themes** — Dark Blue (default), Dark Gray, Dark Green, Dark Purple, and a
-  Light high-contrast scheme. The theme previews live as you cycle it.
+- **10 themes** — Dark Blue (default), Dark Gray, Dark Green, Dark Purple, a Light
+  high-contrast scheme, and 5 vivid schemes: **Pink, Red, Orange, Orange-Black,
+  Blue-Black**. The theme previews live as you cycle it.
 - **Remembers the last folder** — reopens it on next launch (falls back to root
   if it no longer exists).
 - **Reboot to loader** — soft-reboot back to the cart's loader menu (EZ-Flash
@@ -109,9 +110,15 @@ menu (always present on **both** carts):
   and press **A → Restore** to move it back to its original folder. If that folder
   is gone, it lands at the card root; if a file with the same name now exists,
   the restore is auto-renamed `name (restored).ext` so it **never overwrites**.
-- **Delete forever / Empty Trash** — in the Trash view, **A → Delete forever**
-  removes one item permanently; **SELECT → Empty Trash** clears the whole bin.
+- **Delete forever / Empty Trash** — **A** on an item opens its menu (**Restore**
+  or **Delete forever**); **START** opens trash options including **Empty Trash**.
   These are the only steps that actually erase data, and each asks to confirm.
+- **Sort, paths & countdown** — **SELECT** cycles how the bin is sorted:
+  *newest deleted*, *oldest deleted*, *name A-Z/Z-A*, and *origin-path A-Z/Z-A*.
+  From **START → options** you can switch the rows to show each item's **original
+  path** instead of its name (so you can scroll through where things came from).
+  When **Auto-clear** is on, every row and the detail line show a **"Nd"
+  countdown** — the days left before that item is auto-deleted.
 - The recycle bin folder is internal — it's hidden from normal browsing (even
   with *Show hidden* on) and reached only through the Trash action, so you can't
   accidentally file things into it. Batch delete (multi-select) honours the same
@@ -191,8 +198,10 @@ its extension, with **View (hex/text)** always available as the fallback:
 | Key | Action |
 |-----|--------|
 | UP / DOWN | Move through trashed items (hold to repeat); L / R page |
-| A / START | Item menu: **A = Restore** to its original folder · **START = Delete forever** (confirm) |
-| SELECT | **Empty Trash** — permanently erase every item (confirm) |
+| A | Item menu: **A = Restore** to its original folder · **START = Delete forever** (confirm) |
+| SELECT | Cycle sort: newest/oldest deleted · name A-Z/Z-A · origin-path A-Z/Z-A |
+| START | Options: rows show **name** or **origin path** · **Empty Trash** (confirm) |
+| (rows show **"Nd"** = days left before auto-clear deletes them, when Auto-clear is on) ||
 | B | Back to the browser |
 
 ### Settings menu

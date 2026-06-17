@@ -23,8 +23,13 @@ rebuild` with a local devkitARM) with no external checkout.
 - **New since validation: auto-clear old trash** (Settings → *Auto-clear*, Off by
   default, 1–365 days). Purges trashed items older than N days at launch, dated
   from the origin sidecar (cart RTC). Opt-in and fails safe — does nothing if Off
-  or the RTC isn't readable. (This new code path is the only thing added after the
-  hardware pass; worth a quick check on the cart.)
+  or the RTC isn't readable. (This new code path is the only destructive thing
+  added after the hardware pass; worth a quick check on the cart.)
+- **v0.9.0 additions (read-only UI):** 5 vivid themes (Pink/Red/Orange/
+  Orange-Black/Blue-Black — 10 total) and a reworked Trash view — **SELECT** cycles
+  sort (newest/oldest deleted, name, origin-path), **START** toggles name↔path rows
+  + Empty, and every row shows a **days-left** countdown when Auto-clear is on.
+  Restore/Delete-forever/Empty logic is unchanged.
 - **Features complete** — P0 read-only browser (nav/sort/properties/free-space/
   hex+text viewer); P1 on-screen keyboard + mkdir/delete/attributes; P2
   rename/move + copy/cut/paste (incl. recursive folder copy) + multi-select
