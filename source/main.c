@@ -288,6 +288,22 @@ static void fmt_free(uint64_t b, char* out) {
   }
 }
 
+/* Draw the clipboard [CUT]/[COPY] footer if the clipboard is active. Returns true
+ * if it drew (so a caller can skip its own footer hint). Shared by every view. */
+static bool render_clip_footer(void) {
+  if (g_clip_op == CLIP_NONE) return false;
+  char fb[128], ft[128];
+  if (g_clip_count == 1) {
+    char nbf[64]; ui_truncate(nbf, g_clip_buf, 12);
+    siprintf(fb, "[%s] %s  paste in menu", g_clip_op == CLIP_CUT ? "CUT" : "COPY", nbf);
+  } else {
+    siprintf(fb, "[%s] %d items  paste in menu", g_clip_op == CLIP_CUT ? "CUT" : "COPY", g_clip_count);
+  }
+  ui_truncate(ft, fb, 29);
+  ui_text(2, FOOT_Y, UI_WARN, ft);
+  return true;
+}
+
 static void render_browser(int sel, int top) {
   ui_clear();
   int rows = br_rows();
@@ -369,20 +385,9 @@ static void render_browser(int sel, int top) {
 
   if (g_selmode) {
     ui_text(2, FOOT_Y, UI_OK, "A mark SE all ST batch B exit");
-  } else if (g_clip_op != CLIP_NONE) {
-    char fb[128], ft[128];
-    if (g_clip_count == 1) {
-      char nbf[64]; ui_truncate(nbf, g_clip_buf, 12);
-      siprintf(fb, "[%s] %s  paste in menu", g_clip_op == CLIP_CUT ? "CUT" : "COPY", nbf);
-    } else {
-      siprintf(fb, "[%s] %d items  paste in menu", g_clip_op == CLIP_CUT ? "CUT" : "COPY", g_clip_count);
-    }
-    ui_truncate(ft, fb, 29);
-    ui_text(2, FOOT_Y, UI_WARN, ft);
-  } else if (rows == 0) {
-    ui_text(2, FOOT_Y, UI_DIM, "Empty folder   ST = menu");
-  } else {
-    ui_text(2, FOOT_Y, UI_DIM, "A open B up ST menu SE:sort");
+  } else if (!render_clip_footer()) {
+    if (rows == 0) ui_text(2, FOOT_Y, UI_DIM, "Empty folder   ST = menu");
+    else           ui_text(2, FOOT_Y, UI_DIM, "A open B up ST menu SE:sort");
   }
 }
 
@@ -482,8 +487,8 @@ static void render_grid(int sel, int top) {
   }
   ui_truncate(stt, st, 29);
   ui_text(2, STATUS_Y, UI_OK, stt);
-  ui_text(2, FOOT_Y, UI_DIM, g_selmode ? "A mark SE all ST batch B exit"
-                                       : "d-pad move  A open  B up  ST menu");
+  if (g_selmode) ui_text(2, FOOT_Y, UI_OK, "A mark SE all ST batch B exit");
+  else if (!render_clip_footer()) ui_text(2, FOOT_Y, UI_DIM, "d-pad move  A open  B up  ST menu");
 }
 
 static void properties_screen(const FsEntry* e) {
@@ -2308,7 +2313,7 @@ static void render_columns(int sel, int top) {
   siprintf(st, "%s  %d/%d  Columns", sort_label(), rows ? sel + 1 : 0, rows);
   ui_truncate(stt, st, 29);
   ui_text(2, STATUS_Y, UI_OK, stt);
-  ui_text(2, FOOT_Y, UI_DIM, "UD move  A/> enter  B/< up  ST menu");
+  if (!render_clip_footer()) ui_text(2, FOOT_Y, UI_DIM, "UD move  A/> enter  B/< up  ST menu");
 }
 
 /* Ascend one level, landing the cursor on the folder we just left. */
