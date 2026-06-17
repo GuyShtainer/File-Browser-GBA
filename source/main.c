@@ -386,6 +386,106 @@ static void render_browser(int sel, int top) {
   }
 }
 
+/* ---- grid (icon) view -------------------------------------------------- */
+
+#define GRID_Y0       11
+#define GRID_TILE_H   33
+#define GRID_VIS_ROWS 3
+
+static bool ext_is_image(const char* name) {
+  return fsop_ext_is(name, "bmp") || fsop_ext_is(name, "png") ||
+         fsop_ext_is(name, "jpg") || fsop_ext_is(name, "jpeg") ||
+         fsop_ext_is(name, "gif");
+}
+
+/* A small folder glyph (a body with a tab) at top-left (x,y), ~22x18. */
+static void icon_folder(int x, int y, u16 fill, u16 edge) {
+  m3_rect(x + 1, y + 1, x + 9, y + 4, fill);          /* tab     */
+  m3_rect(x, y + 4, x + 21, y + 17, fill);            /* body    */
+  m3_frame(x, y + 4, x + 21, y + 17, edge);           /* outline */
+}
+
+/* A document glyph with a folded corner; `image` adds a tiny picture mark. */
+static void icon_file(int x, int y, u16 fill, u16 edge, u16 bg, bool image) {
+  m3_rect(x + 3, y, x + 18, y + 17, fill);            /* page         */
+  m3_frame(x + 3, y, x + 18, y + 17, edge);
+  m3_rect(x + 14, y, x + 18, y + 4, bg);              /* corner notch */
+  m3_line(x + 14, y + 4, x + 18, y, edge);            /* fold         */
+  if (image) {
+    m3_frame(x + 6, y + 8, x + 15, y + 14, edge);     /* picture box  */
+    m3_plot(x + 8, y + 11, edge);
+    m3_plot(x + 12, y + 10, edge);
+  } else {
+    m3_line(x + 6, y + 5,  x + 15, y + 5,  edge);     /* text lines   */
+    m3_line(x + 6, y + 8,  x + 15, y + 8,  edge);
+    m3_line(x + 6, y + 11, x + 13, y + 11, edge);
+  }
+}
+
+/* Grid / icon view: g_entries (+ the [..] up-entry) as a 2D grid of theme-
+ * colored icons. `top` is the flat index of the first visible tile, row-aligned
+ * to grid_cols by the caller. */
+static void render_grid(int sel, int top) {
+  ui_clear();
+  int rows = br_rows();
+  int cols = clampi(g_set.grid_cols, GRID_COLS_MIN, GRID_COLS_MAX);
+  char hdr[128];
+  ui_truncate(hdr, g_cwd, 29);
+  ui_text(2, HDR_Y, UI_TITLE, hdr);
+
+  int margin = 4;
+  int tile_w = (240 - 2 * margin) / cols;
+  int label_cols = tile_w / 8; if (label_cols < 3) label_cols = 3;
+
+  for (int r = 0; r < GRID_VIS_ROWS; r++) {
+    for (int c = 0; c < cols; c++) {
+      int idx = top + r * cols + c;
+      if (idx >= rows) break;
+      FsEntry* e = br_entry(idx);
+      int tx = margin + c * tile_w;
+      int ty = GRID_Y0 + r * GRID_TILE_H;
+      bool seld = (idx == sel);
+      int iw = 22, ix = tx + (tile_w - iw) / 2, iy = ty + 2;
+      if (!e)             icon_folder(ix, iy, UI_WARN, UI_BORDER);    /* [..] */
+      else if (e->is_dir) icon_folder(ix, iy, UI_DIRCLR, UI_BORDER);
+      else                icon_file(ix, iy, UI_SAVECLR, UI_BORDER, UI_PANEL, ext_is_image(e->name));
+      if (g_selmode && e && g_marked[(int)(e - g_entries)])
+        m3_rect(tx + 1, ty + 1, tx + 6, ty + 6, UI_OK);              /* multi-select mark */
+      char nm[128];
+      ui_truncate(nm, e ? e->name : "..", label_cols);
+      if (seld) m3_rect(tx, ty + 21, tx + tile_w - 2, ty + 30, UI_SEL);
+      ui_text(tx + 1, ty + 22, seld ? UI_SELTEXT : (e && !e->is_dir ? UI_SAVECLR : UI_DIRCLR), nm);
+    }
+  }
+
+  /* selected item's fuller name + meta (reuse the list view's detail rows) */
+  FsEntry* se = br_entry(sel);
+  if (!se) {
+    ui_text(2, DETAIL_NAME_Y, UI_DIRCLR, "[..] parent folder");
+  } else {
+    char dn[128], dm[64], dmt[64], dt[20];
+    ui_truncate(dn, se->name, 29);
+    ui_text(2, DETAIL_NAME_Y, UI_SELTEXT, dn);
+    fmt_datetime(se->dosdt, dt);
+    if (se->is_dir) siprintf(dm, "%s  <DIR>", dt);
+    else { char szb[16]; human_size(se->size, szb); siprintf(dm, "%s  %s", dt, szb); }
+    ui_truncate(dmt, dm, 29);
+    ui_text(2, DETAIL_META_Y, UI_DIM, dmt);
+  }
+
+  char st[64], stt[64];
+  if (g_selmode) {
+    int mc = 0; for (int i = 0; i < g_n; i++) if (g_marked[i]) mc++;
+    siprintf(st, "SEL %d marked  Grid x%d", mc, cols);
+  } else {
+    siprintf(st, "%s %d/%d  Grid x%d", sort_label(), rows ? sel + 1 : 0, rows, cols);
+  }
+  ui_truncate(stt, st, 29);
+  ui_text(2, STATUS_Y, UI_OK, stt);
+  ui_text(2, FOOT_Y, UI_DIM, g_selmode ? "A mark SE all ST batch B exit"
+                                       : "d-pad move  A open  B up  ST menu");
+}
+
 static void properties_screen(const FsEntry* e) {
   ui_clear();
   ui_text(2, HDR_Y, UI_TITLE, "PROPERTIES");
@@ -1238,6 +1338,20 @@ static bool do_foldersize(const FsEntry* e) {
 
 /* ---- settings menu + reboot (both carts) ------------------------------- */
 
+/* The "View" setting folds the grid densities into one cycle:
+ * 0 = List, 1..(GRID range) = Grid x3..x6. (Column view is a separate mode.) */
+static int view_combo_get(void) {
+  if (g_set.view_mode == VIEW_GRID)
+    return 1 + clampi(g_set.grid_cols, GRID_COLS_MIN, GRID_COLS_MAX) - GRID_COLS_MIN;
+  return 0;
+}
+static void view_combo_set(int idx) {
+  int n = (GRID_COLS_MAX - GRID_COLS_MIN + 1) + 1;   /* List + each grid density */
+  idx = ((idx % n) + n) % n;
+  if (idx == 0) g_set.view_mode = VIEW_LIST;
+  else { g_set.view_mode = VIEW_GRID; g_set.grid_cols = GRID_COLS_MIN + (idx - 1); }
+}
+
 /* Modal settings editor: UP/DOWN pick a row, LEFT/RIGHT change its value (the
  * theme previews live). A (or START) saves + closes; B cancels and reverts
  * every change (including the live theme preview) — matching the app's B=back
@@ -1245,7 +1359,7 @@ static bool do_foldersize(const FsEntry* e) {
  * CFG_PATH (Omega-only). Returns true if the listing must be re-read (sort or
  * show-hidden changed); false means a plain repaint suffices. */
 static bool settings_menu(void) {
-  enum { S_THEME, S_SORT, S_HIDDEN, S_CONFDEL, S_TRASH, S_TRASHDAYS, S_VIEWER,
+  enum { S_THEME, S_VIEW, S_SORT, S_HIDDEN, S_CONFDEL, S_TRASH, S_TRASHDAYS, S_VIEWER,
          S_JUMP, S_KDELAY, S_KSPEED, S_FREE, S_RESET, S_COUNT };
   Settings snap = g_set;             /* snapshot for B = cancel/revert */
   u16 saved_mask = ui_get_repeat_mask();
@@ -1261,6 +1375,10 @@ static bool settings_menu(void) {
       for (int i = 0; i < S_COUNT; i++) {
         switch (i) {
           case S_THEME:   siprintf(row, "Theme:        %s", theme_name(g_set.theme)); break;
+          case S_VIEW:
+            if (g_set.view_mode == VIEW_GRID) siprintf(row, "View:         Grid x%d", g_set.grid_cols);
+            else siprintf(row, "View:         List");
+            break;
           case S_SORT:    siprintf(row, "Sort:         %s", sort_label_of(g_set.sort_key, g_set.sort_rev)); break;
           case S_HIDDEN:  siprintf(row, "Show hidden:  %s", g_set.show_hidden ? "ON" : "off"); break;
           case S_CONFDEL: siprintf(row, "Confirm del:  %s", g_set.confirm_delete ? "ON" : "off"); break;
@@ -1276,7 +1394,7 @@ static bool settings_menu(void) {
           case S_FREE:    siprintf(row, "Free space:   %s", free_unit_name(g_set.free_unit)); break;
           case S_RESET:   siprintf(row, "Reset to defaults   (L/R)"); break;
         }
-        ui_text_sel(4, 15 + i * 11, 232, i == sel, UI_TEXT, row);
+        ui_text_sel(4, 14 + i * 10, 232, i == sel, UI_TEXT, row);
       }
       ui_text(2, FOOT_Y, UI_DIM, "UD pick LR chg A save B back");
       dirty = false;
@@ -1302,6 +1420,7 @@ static bool settings_menu(void) {
       switch (sel) {
         case S_THEME:   g_set.theme = (g_set.theme + THEME_COUNT + d) % THEME_COUNT;
                         theme_apply(g_set.theme); break;          /* live preview */
+        case S_VIEW:    view_combo_set(view_combo_get() + d); break;
         case S_SORT: {  int s = (g_set.sort_key * 2 + (g_set.sort_rev ? 1 : 0) + 6 + d) % 6;
                         g_set.sort_key = s / 2; g_set.sort_rev = (s & 1) != 0; break; }
         case S_HIDDEN:  g_set.show_hidden     = !g_set.show_hidden;     break;
@@ -2101,14 +2220,24 @@ static void run_browser(void) {
   rescan();
 
   while (1) {
-    int rows = br_rows();
+    int rows  = br_rows();
+    bool grid = (g_set.view_mode == VIEW_GRID);
+    int cols  = grid ? clampi(g_set.grid_cols, GRID_COLS_MIN, GRID_COLS_MAX) : 1;
+    int vrows = grid ? GRID_VIS_ROWS : LIST_ROWS;
+    int cap   = cols * vrows;
+
     if (rows == 0) sel = 0; else if (sel >= rows) sel = rows - 1;
     if (sel < 0) sel = 0;
-    if (sel < top) top = sel;
-    if (sel >= top + LIST_ROWS) top = sel - LIST_ROWS + 1;
-    if (top < 0) top = 0;
+    /* keep `top` aligned to a grid row so the selected cell stays on-screen */
+    {
+      int selrow = sel / cols, toprow = top / cols;
+      if (selrow < toprow) toprow = selrow;
+      if (selrow >= toprow + vrows) toprow = selrow - vrows + 1;
+      if (toprow < 0) toprow = 0;
+      top = toprow * cols;
+    }
 
-    if (dirty) { render_browser(sel, top); dirty = false; }
+    if (dirty) { if (grid) render_grid(sel, top); else render_browser(sel, top); dirty = false; }
 
     vsync();
     u16 mv  = key_repeat(KEY_UP | KEY_DOWN);
@@ -2117,13 +2246,28 @@ static void run_browser(void) {
     if (!mv && !hit) continue;
     dirty = true;
 
-    if (mv & KEY_DOWN)        { if (rows) sel = (sel + 1) % rows; }
-    else if (mv & KEY_UP)     { if (rows) sel = (sel == 0) ? rows - 1 : sel - 1; }
-    else if (hit & KEY_LEFT)  { sel -= g_set.jump; if (sel < 0) sel = 0; }                       /* jump up   */
-    else if (hit & KEY_RIGHT) { sel += g_set.jump; if (sel >= rows) sel = rows ? rows - 1 : 0; } /* jump down */
-    else if (hit & KEY_L)     { sel -= LIST_ROWS; if (sel < 0) sel = 0; }                /* page up   */
-    else if (hit & KEY_R)     { sel += LIST_ROWS; if (sel >= rows) sel = rows ? rows - 1 : 0; } /* page down */
-    else if (g_selmode) {
+    /* ---- cursor movement (geometry differs by view); actions are shared ---- */
+    bool moved = true;
+    if (grid) {
+      if (mv & KEY_DOWN)        { sel += cols; if (sel >= rows) sel = rows ? rows - 1 : 0; }
+      else if (mv & KEY_UP)     { sel -= cols; if (sel < 0) sel = 0; }
+      else if (hit & KEY_LEFT)  { if (rows) sel = (sel == 0) ? rows - 1 : sel - 1; }   /* prev, wrap */
+      else if (hit & KEY_RIGHT) { if (rows) sel = (sel + 1) % rows; }                  /* next, wrap */
+      else if (hit & KEY_L)     { sel -= cap; if (sel < 0) sel = 0; }
+      else if (hit & KEY_R)     { sel += cap; if (sel >= rows) sel = rows ? rows - 1 : 0; }
+      else moved = false;
+    } else {
+      if (mv & KEY_DOWN)        { if (rows) sel = (sel + 1) % rows; }
+      else if (mv & KEY_UP)     { if (rows) sel = (sel == 0) ? rows - 1 : sel - 1; }
+      else if (hit & KEY_LEFT)  { sel -= g_set.jump; if (sel < 0) sel = 0; }                       /* jump up   */
+      else if (hit & KEY_RIGHT) { sel += g_set.jump; if (sel >= rows) sel = rows ? rows - 1 : 0; } /* jump down */
+      else if (hit & KEY_L)     { sel -= LIST_ROWS; if (sel < 0) sel = 0; }                /* page up   */
+      else if (hit & KEY_R)     { sel += LIST_ROWS; if (sel >= rows) sel = rows ? rows - 1 : 0; } /* page down */
+      else moved = false;
+    }
+    if (moved) continue;
+
+    if (g_selmode) {
       /* selection mode: A marks the highlighted entry, SELECT marks all/none,
        * START opens batch actions, B leaves selection mode. */
       if (hit & KEY_A) {

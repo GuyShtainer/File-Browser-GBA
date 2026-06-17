@@ -30,6 +30,8 @@ void cfg_defaults(void) {
   g_set.key_delay = 16;
   g_set.key_speed = 4;
   g_set.free_unit = FREE_MB;
+  g_set.view_mode = VIEW_LIST;
+  g_set.grid_cols = 4;
   g_set.last_dir[0] = 0;
 }
 
@@ -89,6 +91,8 @@ void cfg_load(const char* path) {
     else if (!strcmp(key, "key_delay"))      g_set.key_delay = clampi(to_int(val), 2, 60);
     else if (!strcmp(key, "key_speed"))      g_set.key_speed = clampi(to_int(val), 1, 30);
     else if (!strcmp(key, "free_unit"))      g_set.free_unit = clampi(to_int(val), 0, FREE_UNIT_COUNT - 1);
+    else if (!strcmp(key, "view_mode"))      g_set.view_mode = clampi(to_int(val), 0, VIEW_COUNT - 1);
+    else if (!strcmp(key, "grid_cols"))      g_set.grid_cols = clampi(to_int(val), GRID_COLS_MIN, GRID_COLS_MAX);
     else if (!strcmp(key, "last_dir")) {
       int i = 0;
       for (; val[i] && i < (int)sizeof(g_set.last_dir) - 1; i++) g_set.last_dir[i] = val[i];
@@ -103,11 +107,12 @@ bool cfg_save(const char* path) {
     "[file_browser_gba]\n"
     "theme=%d\nsort_key=%d\nsort_rev=%d\nviewer_hex=%d\nshow_hidden=%d\n"
     "confirm_delete=%d\ndelete_to_trash=%d\ntrash_days=%d\njump=%d\nkey_delay=%d\n"
-    "key_speed=%d\nfree_unit=%d\nlast_dir=%s\n",
+    "key_speed=%d\nfree_unit=%d\nview_mode=%d\ngrid_cols=%d\nlast_dir=%s\n",
     g_set.theme, g_set.sort_key, g_set.sort_rev ? 1 : 0, g_set.viewer_hex ? 1 : 0,
     g_set.show_hidden ? 1 : 0, g_set.confirm_delete ? 1 : 0,
     g_set.delete_to_trash ? 1 : 0, g_set.trash_days, g_set.jump,
-    g_set.key_delay, g_set.key_speed, g_set.free_unit, g_set.last_dir);
+    g_set.key_delay, g_set.key_speed, g_set.free_unit,
+    g_set.view_mode, g_set.grid_cols, g_set.last_dir);
   if (n <= 0) return false;
   FIL f;
   if (f_open(&f, path, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) return false;

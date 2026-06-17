@@ -82,7 +82,8 @@ menu (always present on **both** carts):
   (written on the Omega only; read on both carts — on the EverDrive settings are
   session-only and reset to defaults next launch). UP/DOWN pick a row, LEFT/RIGHT
   change the value (numeric rows auto-repeat on hold), **A** saves, **B** cancels
-  and reverts. The settings: **theme**, **sort** (key + direction),
+  and reverts. The settings: **theme**, **view** (List or **Grid x3–x6**),
+  **sort** (key + direction),
   **show hidden** files, **confirm before delete**, **delete mode**
   (Trash / Permanent — see the recycle bin below), **auto-clear** (auto-delete
   trash older than N days, or Off), **default file viewer**
@@ -92,6 +93,12 @@ menu (always present on **both** carts):
 - **10 themes** — Dark Blue (default), Dark Gray, Dark Green, Dark Purple, a Light
   high-contrast scheme, and 5 vivid schemes: **Pink, Red, Orange, Orange-Black,
   Blue-Black**. The theme previews live as you cycle it.
+- **View modes** — **List** (the detailed one-per-row default) or a **Grid / icon
+  view** with theme-colored folder/file glyphs. Pick the layout (and its density,
+  **3–6 columns**) from **Settings → View**. In the grid, the d-pad moves in 2D
+  (LEFT/RIGHT wrap to the previous/next item, UP/DOWN jump a row, L/R page) and the
+  selected tile's full name + date/size show on the status line. *(A macOS-style
+  column view is planned next.)*
 - **Remembers the last folder** — reopens it on next launch (falls back to root
   if it no longer exists).
 - **Reboot to loader** — soft-reboot back to the cart's loader menu (EZ-Flash

@@ -8,6 +8,9 @@
  * app_config INI pattern. */
 
 enum { FREE_B = 0, FREE_KB, FREE_MB, FREE_GB, FREE_UNIT_COUNT };
+enum { VIEW_LIST = 0, VIEW_GRID, VIEW_COLUMNS, VIEW_COUNT };  /* browser layout */
+#define GRID_COLS_MIN 3
+#define GRID_COLS_MAX 6
 
 typedef struct {
   int  theme;           /* 0..THEME_COUNT-1                       */
@@ -22,6 +25,8 @@ typedef struct {
   int  key_delay;       /* key_repeat_limits arg 1 (frames)       */
   int  key_speed;       /* key_repeat_limits arg 2 (frames)       */
   int  free_unit;       /* FREE_*                                 */
+  int  view_mode;       /* VIEW_LIST / VIEW_GRID / VIEW_COLUMNS    */
+  int  grid_cols;       /* grid view: icons per row (GRID_COLS_*)  */
   char last_dir[256];   /* folder to reopen next launch           */
 } Settings;
 
