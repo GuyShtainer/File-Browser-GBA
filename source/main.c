@@ -720,7 +720,24 @@ static bool do_duplicate(const FsEntry* e) {
  * harmless orphan sidecar (never a trashed item we can't trace).
  */
 
-static int EWRAM_BSS g_trash_map[FS_MAX];   /* visible trash rows -> g_entries idx */
+/* Visible trash items: each non-sidecar entry in /.sdtrash with its origin path
+ * (read once per scan) and trash timestamp (from the .origin~ sidecar's mtime),
+ * so the trash view can sort by name/path/delete-date and show days-left without
+ * re-reading the SD on every repaint. */
+typedef struct {
+  int  ent;        /* index into g_entries[]                                    */
+  u32  tdate;      /* sidecar (fdate<<16)|ftime = when trashed; 0 if unknown    */
+  bool has_date;   /* tdate is valid                                            */
+  int  days_left;  /* days before auto-clear deletes it; -1 = N/A               */
+  char orig[128];  /* original full path (truncated for display + sort)         */
+} TrashItem;
+static TrashItem EWRAM_BSS g_trash[FS_MAX];
+static int       g_trash_n = 0;
+
+/* Trash sort state (SELECT cycles) + a rows-show-the-origin-path toggle (START). */
+enum { TS_DATE_NEW = 0, TS_DATE_OLD, TS_NAME_AZ, TS_NAME_ZA, TS_PATH_AZ, TS_PATH_ZA, TS_COUNT };
+static int  g_trash_sort = TS_DATE_NEW;
+static bool g_trash_showpath = false;
 
 /* True if `path` is TRASH_DIR itself or sits inside it. */
 static bool under_trash(const char* path) {
@@ -966,28 +983,130 @@ static void trash_autoclean(int days) {
   g_n = 0;   /* g_entries was clobbered by the trash scan; run_browser re-lists */
 }
 
-/* Build g_trash_map[] = the g_entries rows that are real trashed items (skip the
- * .origin~ sidecars). Returns the visible count. */
-static int trash_visible(void) {
-  int v = 0;
-  for (int i = 0; i < g_n; i++)
-    if (!is_origin_sidecar(g_entries[i].name)) g_trash_map[v++] = i;
-  return v;
+/* Case-insensitive ASCII compare (for the name / path trash sorts). */
+static int ci_cmp(const char* a, const char* b) {
+  for (;;) {
+    unsigned char x = (unsigned char)*a++, y = (unsigned char)*b++;
+    if (x >= 'a' && x <= 'z') x = (unsigned char)(x - 32);
+    if (y >= 'a' && y <= 'z') y = (unsigned char)(y - 32);
+    if (x != y) return (int)x - (int)y;
+    if (!x) return 0;
+  }
 }
 
-/* Re-list TRASH_DIR into g_entries (newest first). Returns the visible count. */
-static int trash_scan(void) {
-  int r = fsop_list(TRASH_DIR, g_entries, FS_MAX, &g_trunc, true);  /* show hidden trashed items too */
-  g_n = (r < 0) ? 0 : r;
-  fsop_sort(g_entries, g_n, FS_SORT_DATE, true);
-  return trash_visible();
+/* Order two trash items per the active g_trash_sort (<0 = a sorts before b). */
+static int trash_cmp(const TrashItem* a, const TrashItem* b) {
+  switch (g_trash_sort) {
+    case TS_DATE_OLD: return (a->tdate < b->tdate) ? -1 : (a->tdate > b->tdate) ? 1 : 0;
+    case TS_NAME_AZ:  return  ci_cmp(g_entries[a->ent].name, g_entries[b->ent].name);
+    case TS_NAME_ZA:  return -ci_cmp(g_entries[a->ent].name, g_entries[b->ent].name);
+    case TS_PATH_AZ:  return  ci_cmp(a->orig, b->orig);
+    case TS_PATH_ZA:  return -ci_cmp(a->orig, b->orig);
+    case TS_DATE_NEW:
+    default:          return (a->tdate < b->tdate) ? 1 : (a->tdate > b->tdate) ? -1 : 0; /* newest first */
+  }
 }
 
-/* The Trash viewer: browse trashed items, Restore or permanently Delete each,
- * or Empty the whole bin. Clobbers g_entries (the browser is re-listed by the
- * caller on return). Returns true so the browser always refreshes. */
+static const char* trash_sort_label(void) {
+  switch (g_trash_sort) {
+    case TS_DATE_OLD: return "oldest del";
+    case TS_NAME_AZ:  return "name A-Z";
+    case TS_NAME_ZA:  return "name Z-A";
+    case TS_PATH_AZ:  return "path A-Z";
+    case TS_PATH_ZA:  return "path Z-A";
+    case TS_DATE_NEW:
+    default:          return "newest del";
+  }
+}
+
+/* Stable-ish insertion sort over g_trash[] by the active mode. */
+static void trash_sort_apply(void) {
+  for (int i = 1; i < g_trash_n; i++) {
+    TrashItem tmp = g_trash[i];
+    int j = i - 1;
+    while (j >= 0 && trash_cmp(&g_trash[j], &tmp) > 0) { g_trash[j + 1] = g_trash[j]; j--; }
+    g_trash[j + 1] = tmp;
+  }
+}
+
+/* Re-list /.sdtrash, read each item's origin + trash-date once, compute days-left,
+ * then sort. Returns the visible count. Clobbers g_entries. */
+static int trash_build(void) {
+  GbaRtcTime now; long today = 0; bool have_today = false;
+  if (gba_rtc_get(&now) && now.year >= 2000) {
+    today = days_from_civil((int)now.year, (int)now.month, (int)now.day);
+    have_today = true;
+  }
+  int r = fsop_list(TRASH_DIR, g_entries, FS_MAX, &g_trunc, true);   /* show hidden trashed items too */
+  int n = (r < 0) ? 0 : r;
+  g_trash_n = 0;
+  for (int i = 0; i < n && g_trash_n < FS_MAX; i++) {
+    if (is_origin_sidecar(g_entries[i].name)) continue;
+    TrashItem* it = &g_trash[g_trash_n];
+    it->ent = i; it->orig[0] = 0; it->tdate = 0; it->has_date = false; it->days_left = -1;
+    char origin[PATH_MAX];
+    if (read_origin(g_entries[i].name, origin)) {
+      int j = 0; for (; origin[j] && j < (int)sizeof(it->orig) - 1; j++) it->orig[j] = origin[j];
+      it->orig[j] = 0;
+    }
+    char sp[PATH_MAX]; FILINFO sf;
+    if (sidecar_path(g_entries[i].name, sp) && f_stat(sp, &sf) == FR_OK && sf.fdate) {
+      it->tdate = ((u32)sf.fdate << 16) | (u32)sf.ftime;
+      it->has_date = true;
+      if (g_set.trash_days > 0 && have_today) {           /* days remaining before auto-clear */
+        int ty = (int)((sf.fdate >> 9) & 0x7F) + 1980;
+        int tm = (int)((sf.fdate >> 5) & 0x0F);
+        int td = (int)(sf.fdate & 0x1F);
+        if (tm >= 1 && tm <= 12 && td >= 1 && td <= 31) {
+          long left = (long)g_set.trash_days - (today - days_from_civil(ty, tm, td));
+          it->days_left = (left < 0) ? 0 : (left > 999 ? 999 : (int)left);
+        }
+      }
+    }
+    g_trash_n++;
+  }
+  trash_sort_apply();
+  return g_trash_n;
+}
+
+/* START menu in the trash view: toggle name/path rows + Empty Trash. Returns true
+ * if the trash was emptied (the caller should then exit the trash view). */
+static bool trash_options_menu(void) {
+  int sel = 0; bool dirty = true;
+  while (1) {
+    if (dirty) {
+      ui_clear();
+      ui_text(2, HDR_Y, UI_TITLE, "TRASH OPTIONS");
+      ui_panel(0, 14, 240, 56, UI_PANEL, UI_BORDER);
+      char r0[40];
+      siprintf(r0, "Rows show:  %s", g_trash_showpath ? "Origin path" : "Name + size");
+      ui_text_sel(4, 20, 232, sel == 0, UI_TEXT, r0);
+      ui_text_sel(4, 34, 232, sel == 1, UI_WARN, "Empty Trash (delete all)");
+      ui_text_sel(4, 48, 232, sel == 2, UI_DIM,  "Cancel");
+      ui_text(2, FOOT_Y, UI_DIM, "UD pick  A do  B back");
+      dirty = false;
+    }
+    vsync();
+    u16 mv = key_repeat(KEY_UP | KEY_DOWN);
+    u16 hit = key_hit(KEY_A | KEY_B);
+    if (!mv && !hit) continue;
+    dirty = true;
+    if (hit & KEY_B) return false;
+    else if (mv & KEY_DOWN) sel = (sel + 1) % 3;
+    else if (mv & KEY_UP)   sel = (sel == 0) ? 2 : sel - 1;
+    else if (hit & KEY_A) {
+      if (sel == 0) g_trash_showpath = !g_trash_showpath;
+      else if (sel == 1) { if (confirm("Empty Trash?", "Permanently erases ALL items") && trash_empty()) return true; }
+      else return false;
+    }
+  }
+}
+
+/* The Trash viewer: browse trashed items, sort them (SELECT), toggle path-rows /
+ * Empty (START), Restore or permanently Delete each (A). Clobbers g_entries (the
+ * browser is re-listed by the caller on return). Returns true to refresh. */
 static bool trash_modal(void) {
-  int vis = trash_scan();
+  int vis = trash_build();
   if (vis == 0) { msg_screen("Trash is empty", UI_DIM, "Deleted items appear here"); return true; }
 
   const int ROWS = LIST_ROWS;
@@ -1002,37 +1121,46 @@ static bool trash_modal(void) {
 
     if (dirty) {
       ui_clear();
-      char hdr[48];
-      siprintf(hdr, "TRASH  (%d item%s)", vis, vis == 1 ? "" : "s");
-      ui_text(2, HDR_Y, UI_TITLE, hdr);
+      char hdr[48], hh[48];
+      siprintf(hdr, "TRASH (%d) - %s", vis, trash_sort_label());
+      ui_truncate(hh, hdr, 29);
+      ui_text(2, HDR_Y, UI_TITLE, hh);
       ui_panel(0, BOX_Y, 240, BOX_H, UI_PANEL, UI_BORDER);
       for (int rr = 0; rr < ROWS; rr++) {
         int row = top + rr;
         if (row >= vis) break;
-        FsEntry* e = &g_entries[g_trash_map[row]];
+        TrashItem* it = &g_trash[row];
+        FsEntry* e = &g_entries[it->ent];
         int y = ROW0_Y + rr * ROW_H;
-        char line[128], nbuf[128];
-        if (e->is_dir) {
-          ui_truncate(nbuf, e->name, 20);
-          siprintf(line, "%-20s    <DIR>", nbuf);
+        char line[160], nbuf[160], dleft[6];
+        if (it->days_left >= 0) siprintf(dleft, "%dd", it->days_left); else dleft[0] = 0;
+        if (g_trash_showpath) {
+          ui_truncate(nbuf, it->orig[0] ? it->orig : "(unknown)", dleft[0] ? 24 : 29);
+          siprintf(line, "%-24s %3s", nbuf, dleft);
+        } else if (e->is_dir) {
+          ui_truncate(nbuf, e->name, 17);
+          siprintf(line, "%-17s <DIR> %3s", nbuf, dleft);
         } else {
-          char szb[16]; human_size(e->size, szb);
-          ui_truncate(nbuf, e->name, 16);
-          siprintf(line, "%-15s %9s", nbuf, szb);
+          char szb[12]; human_size(e->size, szb);
+          ui_truncate(nbuf, e->name, 13);
+          siprintf(line, "%-13s %8s %3s", nbuf, szb, dleft);
         }
         ui_text_sel(3, y, 234, row == sel, e->is_dir ? UI_DIRCLR : UI_SAVECLR, line);
       }
-      /* detail: where the highlighted item came from */
-      FsEntry* se = &g_entries[g_trash_map[sel]];
-      char origin[PATH_MAX], db[128];
-      if (read_origin(se->name, origin)) {
-        ui_truncate(db, origin, 29);
-        ui_text(2, DETAIL_NAME_Y, UI_SELTEXT, db);
-        ui_text(2, DETAIL_META_Y, UI_DIM, "original location");
-      } else {
-        ui_text(2, DETAIL_NAME_Y, UI_DIM, "(origin unknown)");
+      /* detail: where the highlighted item came from, when, and days left */
+      TrashItem* its = &g_trash[sel];
+      char db[160];
+      ui_truncate(db, its->orig[0] ? its->orig : "(origin unknown)", 29);
+      ui_text(2, DETAIL_NAME_Y, UI_SELTEXT, db);
+      {
+        char meta[80], mt[160], dt[20];
+        fmt_datetime(its->tdate, dt);                     /* tdate==0 -> "(no date)" */
+        if (its->days_left >= 0) siprintf(meta, "del %s  %dd left", dt, its->days_left);
+        else                     siprintf(meta, "deleted %s", dt);
+        ui_truncate(mt, meta, 29);
+        ui_text(2, DETAIL_META_Y, UI_DIM, mt);
       }
-      ui_text(2, STATUS_Y, UI_DIM, "A: restore/delete   SELECT: empty");
+      ui_text(2, STATUS_Y, UI_DIM, "A act  SELECT sort  START opts");
       ui_text(2, FOOT_Y, UI_DIM, "B = back");
       dirty = false;
     }
@@ -1048,22 +1176,24 @@ static bool trash_modal(void) {
     else if (mv & KEY_UP)   { if (vis) sel = (sel == 0) ? vis - 1 : sel - 1; }
     else if (hit & KEY_L)   { sel -= ROWS; if (sel < 0) sel = 0; }
     else if (hit & KEY_R)   { sel += ROWS; if (sel >= vis) sel = vis - 1; }
-    else if (hit & KEY_SELECT) {
-      if (confirm("Empty Trash?", "Permanently erases ALL items")) {
-        if (trash_empty()) return true;                /* gone -> back to browser */
-        vis = trash_visible();                         /* failed: refresh count */
-      }
+    else if (hit & KEY_SELECT) {                          /* cycle the sort */
+      g_trash_sort = (g_trash_sort + 1) % TS_COUNT;
+      trash_sort_apply();
+      sel = 0; top = 0;
     }
-    else if (hit & (KEY_A | KEY_START)) {
-      FsEntry* se = &g_entries[g_trash_map[sel]];
+    else if (hit & KEY_START) {                           /* options: path-rows / empty */
+      if (trash_options_menu()) return true;              /* emptied -> back to browser */
+    }
+    else if (hit & KEY_A) {
+      TrashItem* it = &g_trash[sel];
       char stored[FS_NAME_CAP];
-      strcpy(stored, se->name);
-      char origin[PATH_MAX], nb[128], ob[128];
+      strcpy(stored, g_entries[it->ent].name);
+      char nb[160], ob[160];
       ui_clear();
       ui_text(6, 36, UI_TITLE, "TRASHED ITEM");
       ui_truncate(nb, stored, 28);
       ui_text(6, 56, UI_TEXT, nb);
-      if (read_origin(stored, origin)) { ui_truncate(ob, origin, 29); ui_text(6, 72, UI_DIM, ob); }
+      if (it->orig[0]) { ui_truncate(ob, it->orig, 29); ui_text(6, 72, UI_DIM, ob); }
       ui_text(6, 98,  UI_OK,   "A = Restore");
       ui_text(6, 112, UI_WARN, "START = Delete forever");
       ui_text(6, 130, UI_DIM,  "B = cancel");
@@ -1072,7 +1202,7 @@ static bool trash_modal(void) {
       if (k & KEY_A) acted = do_restore(stored);
       else if (k & KEY_START) { if (confirm("Delete forever?", "This cannot be undone")) acted = do_purge(stored); }
       if (acted) {
-        vis = trash_scan();
+        vis = trash_build();
         if (vis == 0) { msg_screen("Trash is empty", UI_DIM, "All items handled"); return true; }
         if (sel >= vis) sel = vis - 1;
       }
