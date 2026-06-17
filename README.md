@@ -5,6 +5,14 @@ A **cartridge-native microSD file manager for the Game Boy Advance** — it runs
 moves, renames, deletes (with a **recycle bin**), and hex-edits the files on your
 flashcart's microSD card. No PC, no DS — just the handheld.
 
+## Screenshots
+
+<!-- To add: drop an image in docs/ (e.g. docs/screenshot.png) — a photo of the
+     tool on a real GBA/SP reads best, since the flashcart SD isn't emulated — and
+     replace the line below with:  ![File-Browser-GBA](docs/screenshot.png) -->
+
+*Running on a Game Boy Advance SP + EZ-Flash Omega DE. (Photos coming soon.)*
+
 ## Status
 
 **Hardware-validated.** The whole tool — browsing and every write feature
@@ -16,8 +24,11 @@ from the start. Builds clean (zero warnings).
 
 > **Back up your microSD before bulk deletes** — EZ-Flash writes don't retry.
 > With the default *Delete mode = Trash* the recycle bin is your undo; a
-> *permanent* delete has none. The EverDrive GBA X5 runs as a read-only browser
-> (its write path isn't wired).
+> *permanent* delete has none.
+>
+> **The EverDrive GBA X5 runs as a read-only browser, by design** — its write path
+> isn't wired, so on the EverDrive you can browse / view / search but not create,
+> move, rename, or delete. Every write feature is **EZ-Flash-Omega-only**.
 
 **Phase 0 (read-only browser)** — runs on **both** carts; validated on real hardware:
 
