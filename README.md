@@ -93,12 +93,16 @@ menu (always present on **both** carts):
 - **10 themes** — Dark Blue (default), Dark Gray, Dark Green, Dark Purple, a Light
   high-contrast scheme, and 5 vivid schemes: **Pink, Red, Orange, Orange-Black,
   Blue-Black**. The theme previews live as you cycle it.
-- **View modes** — **List** (the detailed one-per-row default) or a **Grid / icon
-  view** with theme-colored folder/file glyphs. Pick the layout (and its density,
-  **3–6 columns**) from **Settings → View**. In the grid, the d-pad moves in 2D
-  (LEFT/RIGHT wrap to the previous/next item, UP/DOWN jump a row, L/R page) and the
-  selected tile's full name + date/size show on the status line. *(A macOS-style
-  column view is planned next.)*
+- **Three view modes** (pick from **Settings → View**, persisted):
+  - **List** — the detailed one-per-row default.
+  - **Grid / icon view** — theme-colored folder/file glyphs at a density you choose
+    (**3–6 columns**). The d-pad moves in 2D (LEFT/RIGHT wrap to prev/next item,
+    UP/DOWN jump a row, L/R page); the selected tile's full name + date/size show
+    on the status line.
+  - **Column (Miller) view** — a macOS-Finder-style two-pane cascade: the left pane
+    is the focused folder, the right pane **previews the highlighted entry** — a
+    folder's contents, or a file's info. **RIGHT / A** descends into the highlighted
+    folder, **LEFT / B** goes back up, and the header shows the path breadcrumb.
 - **Remembers the last folder** — reopens it on next launch (falls back to root
   if it no longer exists).
 - **Reboot to loader** — soft-reboot back to the cart's loader menu (EZ-Flash

@@ -1338,17 +1338,20 @@ static bool do_foldersize(const FsEntry* e) {
 
 /* ---- settings menu + reboot (both carts) ------------------------------- */
 
-/* The "View" setting folds the grid densities into one cycle:
- * 0 = List, 1..(GRID range) = Grid x3..x6. (Column view is a separate mode.) */
+/* The "View" setting cycles: 0 = List, 1..(grid range) = Grid x3..x6, last = Columns. */
 static int view_combo_get(void) {
+  int ngrid = GRID_COLS_MAX - GRID_COLS_MIN + 1;
   if (g_set.view_mode == VIEW_GRID)
     return 1 + clampi(g_set.grid_cols, GRID_COLS_MIN, GRID_COLS_MAX) - GRID_COLS_MIN;
+  if (g_set.view_mode == VIEW_COLUMNS) return 1 + ngrid;   /* = last */
   return 0;
 }
 static void view_combo_set(int idx) {
-  int n = (GRID_COLS_MAX - GRID_COLS_MIN + 1) + 1;   /* List + each grid density */
+  int ngrid = GRID_COLS_MAX - GRID_COLS_MIN + 1;
+  int n = ngrid + 2;                                       /* List + grids + Columns */
   idx = ((idx % n) + n) % n;
   if (idx == 0) g_set.view_mode = VIEW_LIST;
+  else if (idx == n - 1) g_set.view_mode = VIEW_COLUMNS;
   else { g_set.view_mode = VIEW_GRID; g_set.grid_cols = GRID_COLS_MIN + (idx - 1); }
 }
 
@@ -1376,8 +1379,9 @@ static bool settings_menu(void) {
         switch (i) {
           case S_THEME:   siprintf(row, "Theme:        %s", theme_name(g_set.theme)); break;
           case S_VIEW:
-            if (g_set.view_mode == VIEW_GRID) siprintf(row, "View:         Grid x%d", g_set.grid_cols);
-            else siprintf(row, "View:         List");
+            if (g_set.view_mode == VIEW_GRID)         siprintf(row, "View:         Grid x%d", g_set.grid_cols);
+            else if (g_set.view_mode == VIEW_COLUMNS) siprintf(row, "View:         Columns");
+            else                                      siprintf(row, "View:         List");
             break;
           case S_SORT:    siprintf(row, "Sort:         %s", sort_label_of(g_set.sort_key, g_set.sort_rev)); break;
           case S_HIDDEN:  siprintf(row, "Show hidden:  %s", g_set.show_hidden ? "ON" : "off"); break;
@@ -2214,12 +2218,183 @@ static void apply_find_sel(int* sel, int* top) {
   g_find_sel[0] = 0;
 }
 
+/* ---- column (Miller) view ---------------------------------------------- */
+/*
+ * A two-pane cascading browser (like macOS Finder's column view): the LEFT pane
+ * is the focused folder (g_entries, cursor here); the RIGHT pane previews the
+ * highlighted entry — a folder's contents, or a file's info. RIGHT/A descends
+ * into the highlighted folder, LEFT/B ascends. The right preview is a separate,
+ * capped listing re-read whenever the selection changes.
+ */
+#define COL_ROWS       12
+#define COL_RIGHT_MAX  128
+static FsEntry EWRAM_BSS g_col_right[COL_RIGHT_MAX];
+static int  g_col_right_n = 0;
+static bool g_col_right_trunc = false;
+
+/* Re-list the highlighted entry's folder into the right preview (empty for a
+ * file or the [..] row). Sorted to match the active browser sort. */
+static void col_scan_right(const FsEntry* se) {
+  g_col_right_n = 0; g_col_right_trunc = false;
+  if (!se || !se->is_dir) return;
+  char np[PATH_MAX];
+  if (!path_join(g_cwd, se->name, np)) return;
+  int r = fsop_list(np, g_col_right, COL_RIGHT_MAX, &g_col_right_trunc, g_set.show_hidden);
+  g_col_right_n = (r < 0) ? 0 : r;
+  fsop_sort(g_col_right, g_col_right_n, g_sortkey, g_sortrev);
+}
+
+static void render_columns(int sel, int top) {
+  ui_clear();
+  char hdr[128];
+  ui_truncate(hdr, g_cwd, 29);
+  ui_text(2, HDR_Y, UI_TITLE, hdr);
+  int rows = br_rows();
+
+  ui_panel(0, BOX_Y, 117, BOX_H, UI_PANEL, UI_BORDER);     /* left: focused folder  */
+  ui_panel(119, BOX_Y, 121, BOX_H, UI_PANEL, UI_BORDER);   /* right: preview         */
+
+  /* left list (the focused folder) */
+  for (int r = 0; r < COL_ROWS; r++) {
+    int row = top + r;
+    if (row >= rows) break;
+    FsEntry* e = br_entry(row);
+    int y = ROW0_Y + r * ROW_H;
+    char nm[64], line[80];
+    u16 ink;
+    if (!e) { siprintf(line, "[..]"); ink = UI_WARN; }
+    else if (e->is_dir) { ui_truncate(nm, e->name, 12); siprintf(line, "%-12s>", nm); ink = UI_DIRCLR; }
+    else { ui_truncate(nm, e->name, 13); siprintf(line, "%s", nm); ink = UI_SAVECLR; }
+    ui_text_sel(2, y, 113, row == sel, ink, line);
+  }
+
+  /* right preview of the highlighted entry */
+  int rx = 122;
+  FsEntry* se = br_entry(sel);
+  if (!se) {
+    ui_text(rx, ROW0_Y, UI_DIM, "Parent folder");
+  } else if (se->is_dir) {
+    int n = g_col_right_n;
+    if (n == 0) {
+      ui_text(rx, ROW0_Y, UI_DIM, g_col_right_trunc ? "(too many)" : "(empty)");
+    } else {
+      int shown = (n < COL_ROWS - 1) ? n : (COL_ROWS - 1);
+      for (int r = 0; r < shown; r++) {
+        FsEntry* ce = &g_col_right[r];
+        char nm[64], line[80];
+        if (ce->is_dir) { ui_truncate(nm, ce->name, 13); siprintf(line, "%-13s>", nm); }
+        else { ui_truncate(nm, ce->name, 14); siprintf(line, "%s", nm); }
+        ui_text(rx, ROW0_Y + r * ROW_H, ce->is_dir ? UI_DIRCLR : UI_SAVECLR, line);
+      }
+      char cnt[24];
+      siprintf(cnt, "(%d item%s%s)", n, n == 1 ? "" : "s", g_col_right_trunc ? "+" : "");
+      ui_text(rx, ROW0_Y + (COL_ROWS - 1) * ROW_H, UI_DIM, cnt);
+    }
+  } else {                                                  /* file info pane */
+    char l[40], lt[40], szb[16], dt[24], nm[64];
+    ui_truncate(nm, se->name, 14);
+    ui_text(rx, ROW0_Y, UI_SELTEXT, nm);
+    ui_text(rx, ROW0_Y + 14, UI_DIM, "File");
+    const char* ext = fsop_ext(se->name);
+    if (ext[0]) { siprintf(l, "type: %s", ext); ui_truncate(lt, l, 14); ui_text(rx, ROW0_Y + 28, UI_TEXT, lt); }
+    human_size(se->size, szb);
+    ui_text(rx, ROW0_Y + 40, UI_TEXT, szb);
+    fmt_datetime(se->dosdt, dt);
+    ui_truncate(lt, dt, 14);
+    ui_text(rx, ROW0_Y + 52, UI_DIM, lt);
+  }
+
+  char st[64], stt[64];
+  siprintf(st, "%s  %d/%d  Columns", sort_label(), rows ? sel + 1 : 0, rows);
+  ui_truncate(stt, st, 29);
+  ui_text(2, STATUS_Y, UI_OK, stt);
+  ui_text(2, FOOT_Y, UI_DIM, "UD move  A/> enter  B/< up  ST menu");
+}
+
+/* Ascend one level, landing the cursor on the folder we just left. */
+static void col_ascend(int* sel, int* top) {
+  char leaving[FS_NAME_CAP];
+  strcpy(leaving, base_name(g_cwd));
+  path_up();
+  rescan();
+  int row = 0;
+  for (int i = 0; i < g_n; i++)
+    if (!strcmp(g_entries[i].name, leaving)) { row = i + (at_root() ? 0 : 1); break; }
+  *sel = row; *top = 0;
+  col_scan_right(br_entry(*sel));
+}
+
+/* The column-view loop. Runs until the user switches View away from Columns
+ * (via the actions menu -> Settings). Manages g_cwd itself; the caller rescans. */
+static void column_view(void) {
+  rescan();                                  /* left pane = current g_cwd */
+  int sel = 0, top = 0;
+  col_scan_right(br_entry(sel));
+  bool dirty = true;
+  while (g_set.view_mode == VIEW_COLUMNS) {
+    int rows = br_rows();
+    if (rows == 0) sel = 0; else if (sel >= rows) sel = rows - 1;
+    if (sel < 0) sel = 0;
+    if (sel < top) top = sel;
+    if (sel >= top + COL_ROWS) top = sel - COL_ROWS + 1;
+    if (top < 0) top = 0;
+
+    if (dirty) { render_columns(sel, top); dirty = false; }
+
+    vsync();
+    u16 mv  = key_repeat(KEY_UP | KEY_DOWN);
+    u16 hit = key_hit(KEY_A | KEY_B | KEY_L | KEY_R | KEY_LEFT | KEY_RIGHT |
+                      KEY_START | KEY_SELECT);
+    if (!mv && !hit) continue;
+    dirty = true;
+
+    if (mv & KEY_DOWN)      { if (rows) sel = (sel + 1) % rows; col_scan_right(br_entry(sel)); }
+    else if (mv & KEY_UP)   { if (rows) sel = (sel == 0) ? rows - 1 : sel - 1; col_scan_right(br_entry(sel)); }
+    else if (hit & KEY_L)   { sel -= COL_ROWS; if (sel < 0) sel = 0; col_scan_right(br_entry(sel)); }
+    else if (hit & KEY_R)   { sel += COL_ROWS; if (sel >= rows) sel = rows ? rows - 1 : 0; col_scan_right(br_entry(sel)); }
+    else if (hit & (KEY_RIGHT | KEY_A)) {
+      FsEntry* e = br_entry(sel);
+      if (!e) { if (!at_root()) col_ascend(&sel, &top); }            /* [..] -> up */
+      else if (e->is_dir) {                                          /* descend */
+        char np[PATH_MAX];
+        if (path_join(g_cwd, e->name, np)) {
+          if (under_trash(np)) msg_screen("Reserved folder", UI_DIM, "Use the Trash action");
+          else { strcpy(g_cwd, np); rescan(); sel = 0; top = 0; col_scan_right(br_entry(0)); }
+        }
+      } else if (hit & KEY_A) {                                      /* file -> actions menu */
+        if (actions_menu(e)) { rescan(); sel = 0; top = 0; apply_find_sel(&sel, &top); }
+        if (sel >= br_rows()) sel = 0;
+        col_scan_right(br_entry(sel));
+      }
+    }
+    else if (hit & (KEY_LEFT | KEY_B)) { if (!at_root()) col_ascend(&sel, &top); }   /* ascend */
+    else if (hit & KEY_SELECT) {                                     /* cycle sort */
+      int s = ((int)g_sortkey * 2 + (g_sortrev ? 1 : 0) + 1) % 6;
+      g_sortkey = (FsSortKey)(s / 2);
+      g_sortrev = (s & 1) != 0;
+      fsop_sort(g_entries, g_n, g_sortkey, g_sortrev);
+      sel = 0; top = 0; col_scan_right(br_entry(0));
+    }
+    else if (hit & KEY_START) {                                      /* actions menu (Settings/Find/...) */
+      FsEntry* e = br_entry(sel);
+      if (actions_menu(e)) { rescan(); sel = 0; top = 0; apply_find_sel(&sel, &top); }
+      if (sel >= br_rows()) sel = 0;
+      col_scan_right(br_entry(sel));
+    }
+  }
+}
+
 static void run_browser(void) {
   int sel = 0, top = 0;
   bool dirty = true;
   rescan();
 
   while (1) {
+    if (g_set.view_mode == VIEW_COLUMNS) {   /* the column view runs its own loop */
+      column_view();
+      rescan(); sel = 0; top = 0; dirty = true;
+      continue;
+    }
     int rows  = br_rows();
     bool grid = (g_set.view_mode == VIEW_GRID);
     int cols  = grid ? clampi(g_set.grid_cols, GRID_COLS_MIN, GRID_COLS_MAX) : 1;
