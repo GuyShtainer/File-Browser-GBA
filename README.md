@@ -15,6 +15,9 @@ flashcart's microSD card. No PC, no DS — just the handheld.
 
 ## Status
 
+**v1.0 — stable.** Feature-complete and fully hardware-validated, including the
+reworked Trash view (sort cycle / origin-path rows / restore / days-left countdown).
+
 **Hardware-validated.** The whole tool — browsing and every write feature
 (new file/folder, rename/move, copy/cut/paste, duplicate, delete + the **recycle
 bin**, attributes, the verified hex editor, settings, reboot-to-loader) — was

@@ -1,8 +1,8 @@
 # File-Browser-GBA — release status
 
-**Status: HARDWARE-VALIDATED on a Game Boy Advance SP + EZ-Flash Omega DE — the
-whole tool, including the recycle bin (Trash), works on the real cartridge.
-Builds clean (zero warnings).**
+**Status: v1.0.0 — HARDWARE-VALIDATED on a Game Boy Advance SP + EZ-Flash Omega DE —
+the whole tool, including the recycle bin (Trash) and its reworked view, works on
+the real cartridge. Builds clean (zero warnings).**
 
 `file_browser_gba.gba` — ROM ~130 KB, IWRAM ~11.9 KB / 32 KB, EWRAM well within 256 KB.
 
@@ -23,8 +23,7 @@ rebuild` with a local devkitARM) with no external checkout.
 - **New since validation: auto-clear old trash** (Settings → *Auto-clear*, Off by
   default, 1–365 days). Purges trashed items older than N days at launch, dated
   from the origin sidecar (cart RTC). Opt-in and fails safe — does nothing if Off
-  or the RTC isn't readable. (This new code path is the only destructive thing
-  added after the hardware pass; worth a quick check on the cart.)
+  or the RTC isn't readable. **Confirmed on the cartridge as of 1.0.**
 - **v0.9.0 additions (read-only UI):** 5 vivid themes (Pink/Red/Orange/
   Orange-Black/Blue-Black — 10 total) and a reworked Trash view — **SELECT** cycles
   sort (newest/oldest deleted, name, origin-path), **START** toggles name↔path rows
@@ -60,14 +59,14 @@ rebuild` with a local devkitARM) with no external checkout.
   name of 4-byte codepoints could exceed an on-screen-string buffer); all
   truncation chains now sized for the `~4·max_cols` worst case. Rebuilt clean.
 
-## No remaining gate — only watch the new auto-clear option
-The full feature set (P0–P7, including Trash) has been observed on a real
-EZ-Flash Omega DE. The only code added *after* that hardware pass is the opt-in
-**Auto-clear old trash** option — it fails safe (does nothing if Off or the RTC
-is unreadable), but since it deletes automatically, give it a quick check on the
-cart with a short day count (items B51 in
-[HARDWARE-SIGNOFF.md](HARDWARE-SIGNOFF.md)). **Back up the microSD before bulk
-deletes** as a general habit — EZ-Flash writes don't retry.
+## v1.0.0 — no remaining gate
+The full feature set (P0–P7, including the recycle bin) has been confirmed on a
+real EZ-Flash Omega DE — and as of 1.0 that now includes the two items that were
+previously still pending: the opt-in **Auto-clear old trash** option and the
+reworked **Trash view** (sort cycle, origin-path rows, restore-in-view, the
+days-left countdown). All confirmed on the cartridge; nothing outstanding.
+**Back up the microSD before bulk deletes** as a general habit — EZ-Flash writes
+don't retry.
 
 Open caveats: original (non-DE) Omega unproven; >2 TB exFAT untested; RTC
 exposure is per-cart (auto-clear needs the RTC).

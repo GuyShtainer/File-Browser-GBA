@@ -4,6 +4,16 @@ All notable changes to **File-Browser-GBA**. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the Git tags /
 GitHub releases.
 
+## [1.0.0] — 2026-06-29
+### Changed
+- **1.0 — stable.** No functional changes since 0.12.0 — the same hardware-validated
+  ROM, now declared a stable 1.0 release.
+- The reworked **Trash view** (SELECT sort cycle, name↔origin-path rows, restore-in-
+  view, the days-left countdown) is now **hardware-validated** on a GBA SP + EZ-Flash
+  Omega DE — the last item that was gating 1.0 (closes #3). The whole tool (P0–P7 —
+  every read and write path, the recycle bin, and auto-clear) has now been confirmed
+  on the real cartridge.
+
 ## [0.12.0] — 2026-06-18
 ### Added
 - Shared **clipboard `[CUT]`/`[COPY]` footer** now shows in **all three views**
@@ -53,6 +63,7 @@ GitHub releases.
   **verified hex editor**; Hex / word-wrapped-Text / **BMP** viewers; 5 themes;
   persistent settings; reboot-to-loader. EverDrive GBA X5 runs read-only.
 
+[1.0.0]: https://github.com/GuyShtainer/File-Browser-GBA/releases/tag/v1.0.0
 [0.12.0]: https://github.com/GuyShtainer/File-Browser-GBA/releases/tag/v0.12.0
 [0.11.0]: https://github.com/GuyShtainer/File-Browser-GBA/releases/tag/v0.11.0
 [0.10.0]: https://github.com/GuyShtainer/File-Browser-GBA/releases/tag/v0.10.0
