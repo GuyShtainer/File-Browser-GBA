@@ -4,6 +4,16 @@ All notable changes to **File-Browser-GBA**. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the Git tags /
 GitHub releases.
 
+## [Unreleased]
+### Fixed
+- **Intermittent hang at "Detecting flashcart..."** on the EZ-Flash Omega DE: the
+  cart-detection code used to identify the currently-running page by a single ROM
+  header word, which is identical for every build sharing a title. If an older
+  same-titled copy of this tool was still sitting in PSRAM (the last SD load) or on
+  a lower NOR page, booting a newer copy from NOR could map the stale copy instead
+  and hang before the file list ever showed. Detection now verifies the page's
+  actual content, not just its title, before trusting it.
+
 ## [1.0.0] — 2026-06-29
 ### Changed
 - **1.0 — stable.** No functional changes since 0.12.0 — the same hardware-validated
