@@ -187,7 +187,7 @@ $(OUTPUT).elf : $(OFILES)
 
 endif
 
-.PHONY: clean rebuild
+.PHONY: $(BUILD) all clean rebuild
 rebuild: clean $(BUILD)
 
 # EOF

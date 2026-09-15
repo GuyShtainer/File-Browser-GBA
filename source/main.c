@@ -2526,8 +2526,19 @@ int main(void) {
   log_line("mGBA debug log: %s", log_under_mgba() ? "active" : "absent");
 
   show_msg("Detecting flashcart...", NULL);
-  if (!flashcartio_activate()) halt_msg("No flashcart detected!");
+  if (!flashcartio_activate()) {
+    char m[32];
+    siprintf(m, "No flashcart! det=%d pg=%x",
+             flashcartio_detect_code(), flashcartio_ezfo_page());
+    halt_msg(m);                       /* 27 cols max; UI_COLS is 30 at x=6 */
+  }
   log_line("flashcart: %s", flashcart_name());
+  {
+    unsigned first = 0xFFFFu;
+    unsigned lookalikes = flashcartio_ezfo_lookalikes(&first);
+    log_line("flashcart detect: code=%d ezfo_page=0x%x lookalikes=%u first=0x%x",
+             flashcartio_detect_code(), flashcartio_ezfo_page(), lookalikes, first);
+  }
 
   static FATFS fs;
   FRESULT fr = f_mount(&fs, "", 1);
