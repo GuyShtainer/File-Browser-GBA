@@ -2528,6 +2528,12 @@ int main(void) {
   show_msg("Detecting flashcart...", NULL);
   if (!flashcartio_activate()) halt_msg("No flashcart detected!");
   log_line("flashcart: %s", flashcart_name());
+  {
+    unsigned first = 0xFFFFu;
+    unsigned lookalikes = flashcartio_ezfo_lookalikes(&first);
+    log_line("flashcart detect: code=%d ezfo_page=0x%x lookalikes=%u first=0x%x",
+             flashcartio_detect_code(), flashcartio_ezfo_page(), lookalikes, first);
+  }
 
   static FATFS fs;
   FRESULT fr = f_mount(&fs, "", 1);
