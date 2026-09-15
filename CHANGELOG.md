@@ -13,6 +13,10 @@ GitHub releases.
   a lower NOR page, booting a newer copy from NOR could map the stale copy instead
   and hang before the file list ever showed. Detection now verifies the page's
   actual content, not just its title, before trusting it.
+- **A "no cartridge detected" failure now reaches the halt screen.** In the rare
+  case where detection could not find the running image on any page, the tool used
+  to freeze with a blank screen; it now shows `No flashcart! det=6 pg=ffff` so the
+  state is reportable. (Reliable when the tool was launched from the SD card.)
 
 ## [1.0.0] — 2026-06-29
 ### Changed
