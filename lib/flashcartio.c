@@ -69,6 +69,13 @@ bool flashcartio_activate(void) {
 
     return true;
   }
+
+#if FLASHCARTIO_ED_DISABLE_IRQ != 0
+  // the EverDrive probe said "not me": hand IRQs back before the EZ-Flash
+  // path, which brackets its own IME save/restore.
+  REG_IME = ime;
+#endif
+
 #endif
 
 #if FLASHCARTIO_EZFO_ENABLE != 0
