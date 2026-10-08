@@ -99,7 +99,7 @@ static bool tx_load_file(const char* path, uint8_t* mem, uint32_t cap) {
   return tb_load(mem, n);
 }
 
-static void tx_save_error(FRESULT fr, const char* name) {
+static void tx_save_error(FRESULT fr, const char* path, const char* name) {
   char l[40], t[64];
   if (fr == FSOP_ERR_LEFTOVER) {
     siprintf(t, "%s.txtnew~", name);
@@ -108,15 +108,21 @@ static void tx_save_error(FRESULT fr, const char* name) {
   } else if (fr == FSOP_ERR_SHARED) {
     tx_msg("Save refused", "backup shares data with file", "original untouched");
   } else {
-    siprintf(l, "FatFs error %d", (int)fr);
-    tx_msg("Save failed", l, "buffer is still unsaved");
+    FILINFO c;
+    if (f_stat(path, &c) != FR_OK) {
+      /* both renames failed: the data lives only in name.bak~ + name.txtnew~ */
+      tx_msg("Save failed - RECOVER", "see name.bak~ and", "name.txtnew~");
+    } else {
+      siprintf(l, "FatFs error %d", (int)fr);
+      tx_msg("Save failed", l, "buffer is still unsaved");
+    }
   }
 }
 
 /* True when the file was written (buffer marked clean). */
 static bool tx_save(const char* path, const char* name) {
   FRESULT fr = fsop_save_buffer(path, tb_data(), tb_len(), true);
-  if (fr != FR_OK) { tx_save_error(fr, name); return false; }
+  if (fr != FR_OK) { tx_save_error(fr, path, name); return false; }
   tb_clean();
   s_saved_any = true;
   s_note = "Saved - original kept as .bak~";
