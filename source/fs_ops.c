@@ -621,6 +621,6 @@ FRESULT fsop_save_buffer(const char* path, const uint8_t* data, uint32_t len,
     if (existed && !keep_backup) f_unlink(bak);
     return FR_OK;
   }
-  if (fr == FSOP_ERR_SHARED || f_stat(path, &fno) == FR_OK) f_unlink(tmp);   /* original in place: drop temp */
+  if (!existed || fr == FSOP_ERR_SHARED || f_stat(path, &fno) == FR_OK) f_unlink(tmp);   /* original in place: drop temp */
   return fr;
 }
