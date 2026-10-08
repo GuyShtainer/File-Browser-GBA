@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "ff.h"
+#include "log.h"
 #include "fs_ops.h"
 #include "textbuf.h"
 #include "ui.h"
@@ -102,6 +103,10 @@ static bool tx_load_file(const char* path, uint8_t* mem, uint32_t cap) {
 
 static void tx_save_error(FRESULT fr, const char* path, const char* name) {
   char l[40], t[64];
+  if (fr == FSOP_ERR_LEFTOVER) log_line("txtedit: refused leftover temp %s", path);
+  else if (fr == FSOP_ERR_SHARED) log_line("txtedit: refused shared chain %s", path);
+  else log_line("txtedit: save failed fr=%d %s", (int)fr, path);
+  (void)log_flush_to_sd(LOG_PATH);   /* the outcome line reaches the card now (chain oracle) */
   if (fr == FSOP_ERR_LEFTOVER) {
     siprintf(t, "%s.txtnew~", name);
     ui_truncate(l, t, 29);
@@ -132,6 +137,8 @@ static bool tx_save(const char* path, const char* name) {
   FRESULT fr = fsop_save_buffer(path, tb_data(), tb_len(), true);
   if (fr != FR_OK) { tx_save_error(fr, path, name); return false; }
   tb_clean();
+  log_line("txtedit: saved %s", path);
+  (void)log_flush_to_sd(LOG_PATH);   /* the outcome line reaches the card now (chain oracle) */
   s_saved_any = true;
   s_note = "Saved - previous kept as .bak~";
   return true;

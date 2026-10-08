@@ -38,12 +38,14 @@
 #include "pathlist.h"
 #include "cfg.h"
 #include "gba_rtc.h"
+#ifdef VSD_ENABLE
+#include "vsd.h"   /* make vsd: attach the harness-hosted virtual SD instead of the flashcart */
+#endif
 
 /* Everything the tool writes lives in ONE folder at the SD root (toolkit rule
  * 9). The Trash (/.sdtrash) stays where it is. The pre-1.1 root-level settings
  * file is still READ when the new one is absent (never deleted). */
 #define APP_DIR        "/file_browser_gba"
-#define LOG_PATH       APP_DIR "/log.txt"
 #define CFG_PATH       APP_DIR "/settings.cfg"
 #define CFG_PATH_OLD   "/file_browser_gba.cfg"
 #define PINS_PATH      APP_DIR "/pins.txt"
@@ -687,6 +689,8 @@ static bool save_pathlist(const char* path, const PathList* l) {
   if (n < 0) return false;
   FRESULT fr = fsop_save_buffer(path, g_scratch.text, (uint32_t)n, false);
   if (fr != FR_OK) log_line("save %s failed fr=%d", path, (int)fr);
+  else log_line("%s: saved %d", strcmp(path, PINS_PATH) == 0 ? "pins" : "shortcuts", pl_count(l));
+  (void)log_flush_to_sd(LOG_PATH);   /* the outcome line reaches the card now (chain oracle) */
   if (fr == FSOP_ERR_LEFTOVER) save_leftover_msg(path);
   return fr == FR_OK;
 }
@@ -826,6 +830,8 @@ static bool save_buttons(void) {
   }
   FRESULT fr = fsop_save_buffer(BUTTONS_PATH, g_scratch.text, (uint32_t)n, false);
   if (fr != FR_OK) log_line("save buttons failed fr=%d", (int)fr);
+  else log_line("buttons: saved");
+  (void)log_flush_to_sd(LOG_PATH);   /* the outcome line reaches the card now (chain oracle) */
   if (fr == FSOP_ERR_LEFTOVER) save_leftover_msg(BUTTONS_PATH);
   return fr == FR_OK;
 }
@@ -3086,6 +3092,7 @@ static void init_system(void) {
   key_repeat_limits(16, 4);   /* hold ~0.27s, then repeat ~15/s */
 }
 
+#ifndef VSD_ENABLE   /* the virtual-SD build logs "virtual SD" instead */
 static const char* flashcart_name(void) {
   switch (active_flashcart) {
     case EVERDRIVE_GBA_X5: return "EverDrive GBA X5";
@@ -3093,6 +3100,7 @@ static const char* flashcart_name(void) {
     default:               return "none";
   }
 }
+#endif
 
 int main(void) {
   init_system();
@@ -3102,6 +3110,13 @@ int main(void) {
   log_line("=== SD File Browser (File-Browser-GBA, Phase 0) ===");
   log_line("mGBA debug log: %s", log_under_mgba() ? "active" : "absent");
 
+#ifdef VSD_ENABLE
+  /* Emulator-only build (make vsd): the sector transport is the host-served virtual SD
+   * (docs/kb/virtual-sd-harness.md); flashcartio_activate() would find no cart in mGBA. */
+  show_msg("Attaching virtual SD...", NULL);
+  if (!vsd_attach()) halt_msg("VSD: no host attached");
+  log_line("flashcart: virtual SD");
+#else
   show_msg("Detecting flashcart...", NULL);
   if (!flashcartio_activate()) {
     char m[32];
@@ -3110,6 +3125,7 @@ int main(void) {
     halt_msg(m);                       /* 27 cols max; UI_COLS is 30 at x=6 */
   }
   log_line("flashcart: %s", flashcart_name());
+#endif
   {
     unsigned first = 0xFFFFu;
     unsigned lookalikes = flashcartio_ezfo_lookalikes(&first);

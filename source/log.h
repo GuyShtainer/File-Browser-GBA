@@ -8,6 +8,11 @@
  *   3. a file on the SD card (the persistent artifact for hardware debugging)
  */
 
+/* The persistent log file on the card (inside the tool's one SD folder, /file_browser_gba/).
+ * Save paths flush here right after logging their outcome, so the log is the oracle for
+ * the virtual-SD chains (tools/vsd_chains.py) as well as for hardware debugging. */
+#define LOG_PATH "/file_browser_gba/log.txt"
+
 void log_init(void);                  /* probe/open the mGBA debug channel   */
 int  log_under_mgba(void);            /* 1 if running under mGBA, else 0      */
 

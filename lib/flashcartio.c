@@ -11,6 +11,10 @@
 #include "ezflashomega/io_ezfo.h"
 #endif
 
+#ifdef VSD_ENABLE
+#include "vsd.h"   /* the harness-hosted virtual SD, emulator-build-only seam */
+#endif
+
 ActiveFlashcart active_flashcart = NO_FLASHCART;
 volatile bool flashcartio_is_reading = false;
 
@@ -96,6 +100,14 @@ bool flashcartio_activate(void) {
 }
 
 bool flashcartio_read_sector(u32 sector, u8* destination, u16 count) {
+#ifdef VSD_ENABLE
+  if (vsd_attached()) {
+    flashcartio_is_reading = true;   /* exercise the same OS-mode gate real reads do */
+    bool ok = vsd_xfer(VSD_OP_READ, sector, (u32)destination, count);
+    flashcartio_is_reading = false;
+    return ok;
+  }
+#endif
   switch (active_flashcart) {
 #if FLASHCARTIO_ED_ENABLE != 0
     case EVERDRIVE_GBA_X5: {

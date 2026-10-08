@@ -1,6 +1,6 @@
 /* A RAM disk for the real lib/fatfs, with the failure knobs a flashcart actually has.
  *
- * Every knob mirrors a condition Guy's card can be in, and each one is a way the log
+ * Every knob mirrors a condition a real card can be in, and each one is a way the log
  * can go silent on hardware:
  *   rd_protect            -> a write-protected volume: f_open(FA_WRITE) is refused
  *   rd_fail_write_in      -> the Nth disk_write fails (EZ-Flash writes have no retry)
@@ -72,7 +72,7 @@ extern unsigned long rd_write_calls;   /* disk_write CALLS (the write-side trans
 extern unsigned long rd_read_back;
 extern unsigned long rd_read_last;
 
-/* ---- the POWER CUT (y19-s1) -- unlike the honest-error / liar knobs above, a cut is not an
+/* ---- the POWER CUT -- unlike the honest-error / liar knobs above, a cut is not an
  * error return: the process is simply gone. The first N sectors of a run land intact, the
  * next one lands TORN (its first rd_cut_torn bytes new, the rest still the old bytes -- a
  * sector programmed part way), nothing after it lands, and every later disk_write reports
@@ -85,7 +85,7 @@ extern unsigned long rd_read_last;
  * rd_snapshot()/rd_restore() make thousands of cut points affordable: restore rewinds only
  * the sectors written since the snapshot. rd_fattime_now (0 = the fixed default stamp) is
  * the live RTC; rd_fattime_hook, when set, is get_fattime's filter -- the seam the
- * journal's frozen-timestamp hook plugs into on the host exactly as slice 2 plugs it into
+ * frozen-timestamp hook of a tool's own journal plugs into on the host exactly as it plugs into
  * diskio_write.c's get_fattime on the cartridge. */
 #include <stdint.h>
 extern long rd_cut_sectors;

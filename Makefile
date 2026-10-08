@@ -112,6 +112,13 @@ CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions
 ASFLAGS := $(ARCH) $(INCLUDE)
 LDFLAGS := $(ARCH) -Wl,--print-memory-usage,-Map,$(PROJ).map
 
+# --- emulator-only virtual-SD build: `make vsd` (docs/kb/virtual-sd-harness.md) ---
+# Defines VSD_ENABLE, builds into its own directory and file name so the shipped
+# build is never contaminated. Shipped `make` is unchanged.
+ifeq ($(strip $(VSD)), 1)
+	CFLAGS += -DVSD_ENABLE
+endif
+
 ifeq ($(strip $(bMB)), 1)
 	TARGET := $(PROJ).mb
 else
@@ -187,7 +194,14 @@ $(OUTPUT).elf : $(OFILES)
 
 endif
 
-.PHONY: $(BUILD) all clean rebuild
+.PHONY: $(BUILD) all clean rebuild vsd vsd-clean
 rebuild: clean $(BUILD)
+
+vsd:
+	@$(MAKE) --no-print-directory VSD=1 BUILD=build-vsd PROJ=file_browser_gba-vsd all
+
+vsd-clean:
+	@echo clean vsd ...
+	@rm -rf build-vsd file_browser_gba-vsd.elf file_browser_gba-vsd.gba file_browser_gba-vsd.map
 
 # EOF
