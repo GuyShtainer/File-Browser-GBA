@@ -1593,7 +1593,7 @@ static bool trash_modal(void) {
         ui_truncate(mt, meta, 29);
         ui_text(2, DETAIL_META_Y, UI_DIM, mt);
       }
-      ui_text(2, STATUS_Y, UI_DIM, "A act  SELECT sort  START opts");
+      ui_text(2, STATUS_Y, UI_DIM, "A act SELECT sort START opts");
       ui_text(2, FOOT_Y, UI_DIM, "B = back");
       dirty = false;
     }
