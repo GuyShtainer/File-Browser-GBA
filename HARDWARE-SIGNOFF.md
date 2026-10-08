@@ -539,7 +539,7 @@ RTC is unreadable, it deletes nothing.
 
 ---
 
-# v1.1 candidate addendum - text editor, pins, shortcuts, button combos  -> B52-B62  (write, Omega-only)
+# v1.1 candidate addendum - text editor, pins, shortcuts, button combos  -> B52-B63  (write, Omega-only)
 
 The SD write/rename path now runs under the virtual-SD harness (`make vsd`,
 `tools/vsd_chains.py`, see the README's development section), which is the evidence cited per
@@ -639,3 +639,13 @@ hardware-only. All new files live in `/file_browser_gba/`.
       the temp on the PC and pinning works again. Control: with ONLY `pins.txt.bak~`
       (no temp) the boot shows no pins. PASS / FAIL / NOTES: ____
 - Evidence: none yet (no chain stages the `.bak~`-only boot); hardware-only until a chain does.
+
+## (V11-12) Text/pins/shortcuts/buttons save: post-swap re-verify  -> B63
+- [ ] Save an edited text file (and pin / add a shortcut / bind a button) on a healthy card: it
+      shows "Saved" as before and no `.txtnew~` is left. A card that acknowledges a rename it did
+      not keep cannot be staged on real hardware; the failure message is "Save NOT verified /
+      card does not hold the / new text - see .txtnew~" (pins/shortcuts/buttons: "<name>.txtnew~ /
+      save NOT verified - check it"). PASS / FAIL / NOTES: ____________
+- Evidence: EMU+VSD chain 7 (`lie_after` sweep: every k where the new file is not the final state
+  now shows `shows-other`, was `believes-saved` for k=14-19) + host_save_test cases 5/5b/5c
+  (dropped rename; same-length different bytes; healthy control). Not run on hardware.

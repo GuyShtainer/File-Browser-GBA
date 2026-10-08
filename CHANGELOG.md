@@ -49,6 +49,11 @@ GitHub releases.
   case where detection could not find the running image on any page, the tool used
   to freeze with a blank screen; it now shows `No flashcart! det=6 pg=ffff` so the
   state is reportable. (Reliable when the tool was launched from the SD card.)
+- **Saves re-verify the final file after the rename swap** (text editor, pins, shortcuts,
+  button bindings): the file is re-read from the card with FatFs's cached directory window
+  bypassed, so a card that acknowledges a write it did not keep now shows "Save NOT verified"
+  instead of "Saved". Found by the virtual-SD `lie_after` sweep (chain 7). The hex editor's
+  save path does not have this yet (Known issues).
 
 ### Known issues (v1.1 candidate)
 - The hex editor save path (`fsop_apply_edits`) still lacks the leftover-temp and
