@@ -9,7 +9,7 @@ GitHub releases.
 ## [1.1.0] — 2026-10-09
 > **Not hardware-tested.** Everything in 1.1.0 was built and checked on a PC (host suites,
 > fault-injection runs of the save path, twelve scripted chains on a virtual SD card under
-> mGBA); none of it has run on a cartridge yet. Checklist: `HARDWARE-SIGNOFF.md` rows B52–B63.
+> mGBA); none of it has run on a cartridge yet. Checklist: `HARDWARE-SIGNOFF.md` rows B52–B64.
 
 ### Added (Omega-only writes)
 - **On-screen text editor** (actions menu -> *Edit text*, Omega-only, files up to 32 KiB).

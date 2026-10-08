@@ -55,7 +55,7 @@ class RunnerError(Exception):
 
 def _default_vendor() -> Path:
     """mGBA Python bindings: $VSD_MGBA_VENDOR, else rec2mp4's vendor dir next to this repo
-    (gba-toolkit/projects/rec2mp4/vendor from the toolkit, ../rec2mp4/vendor from a sub-project)."""
+    (../rec2mp4/vendor, i.e. rec2mp4 checked out next to this repo)."""
     here = Path(__file__).resolve()
     cands = [Path(os.environ["VSD_MGBA_VENDOR"])] if os.environ.get("VSD_MGBA_VENDOR") else []
     cands += [here.parents[1] / "projects" / "rec2mp4" / "vendor", here.parents[2] / "rec2mp4" / "vendor"]

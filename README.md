@@ -47,17 +47,18 @@ SELECT+key combos, the `/file_browser_gba/` folder and the cart-detection fixes 
 and checked on a PC only (host suites, save-path fault injection, twelve scripted chains on a
 virtual SD card under mGBA). None of it has run on a cartridge yet — treat it as beta on real
 hardware; every write keeps a `.bak~`. Checklist: [HARDWARE-SIGNOFF.md](HARDWARE-SIGNOFF.md)
-rows B52–B63.
+rows B52–B64.
 
 **v1.0 — stable.** Feature-complete and fully hardware-validated, including the
 reworked Trash view (sort cycle / origin-path rows / restore / days-left countdown).
 
-**Hardware-validated.** The whole tool — browsing and every write feature
-(new file/folder, rename/move, copy/cut/paste, duplicate, delete + the **recycle
-bin**, attributes, the verified hex editor, settings, reboot-to-loader) — was
-developed and tested directly on a **Game Boy Advance SP with an EZ-Flash Omega
-DE**, and it works. There were **no emulator runs** — it ran on the cartridge
-from the start. Builds clean (zero warnings).
+**v1.0.0 was hardware-validated.** Everything in the 1.0 feature set — browsing
+and every write feature (new file/folder, rename/move, copy/cut/paste, duplicate,
+delete + the **recycle bin**, attributes, the verified hex editor, settings,
+reboot-to-loader) — was developed and tested directly on a **Game Boy Advance SP
+with an EZ-Flash Omega DE**, with no emulator runs at the time. **The v1.1
+additions were tested on a PC and under mGBA only** (see the status above and the
+virtual-SD section below). Builds clean (zero warnings).
 
 > **Back up your microSD before bulk deletes** — EZ-Flash writes don't retry.
 > With the default *Delete mode = Trash* the recycle bin is your undo; a
@@ -353,8 +354,8 @@ mounts this folder and `make` finds everything locally — no external checkout.
 
 `make vsd` builds a private `file_browser_gba-vsd.gba` in which the flashcart SD driver is
 replaced by a mailbox that a host script serves from a FAT16 image while the ROM runs in
-mGBA (the seam and the protocol are documented in the gba-toolkit's
-`docs/kb/virtual-sd-harness.md`). The shipped ROM (`make`) contains none of it: the seam is
+mGBA (the seam and the protocol are documented in `lib/vsd.h` and the
+docstrings of `tools/vsd.py` / `tools/vsd_run.py`). The shipped ROM (`make`) contains none of it: the seam is
 compiled out, so the `vsd_*` symbols are absent and every other object file is byte-identical
 (`tools/vsd_chains.py` chain 12 checks that).
 
@@ -368,7 +369,8 @@ python3 tools/vsd_shots.py                # rebuilds docs/screenshots/*.png from
 
 The chains drive the real UI by key taps and judge the card itself: which paths changed, the
 exact bytes of the edited file, and the lines the app logged. They run under mGBA with the
-Python bindings from `projects/rec2mp4/vendor` of the gba-toolkit (or set `VSD_MGBA_VENDOR`).
+Python bindings from the `vendor/` directory of [rec2mp4](https://github.com/GuyShtainer/rec2mp4), checked out next to this repo as
+`../rec2mp4` (or set `VSD_MGBA_VENDOR`).
 The harness cannot prove the EZ-Flash OS-mode timing, the real card's behaviour or anything
 that needs the physical cartridge; those stay in HARDWARE-SIGNOFF.md.
 
@@ -415,9 +417,10 @@ File-Browser-GBA/
   can be host-compiled.
 
 **Anything touching the SD write path, the RTC, or user data is not "done" until
-real-hardware sign-off** — the SD path is not emulated. That sign-off is **done**:
-the whole tool, including the recycle bin, was developed and tested on a GBA SP +
-EZ-Flash Omega DE. See [HARDWARE-SIGNOFF.md](HARDWARE-SIGNOFF.md).
+real-hardware sign-off** — the virtual-SD harness (above)
+emulates the SD path for development but does not replace the cartridge. That
+sign-off is **done for the v1.0.0 feature set**; the v1.1 rows **B52–B64** are
+**pending**. See [HARDWARE-SIGNOFF.md](HARDWARE-SIGNOFF.md).
 
 ## License
 
@@ -437,14 +440,18 @@ open-source work — their licenses are included and respected:
   [LICENSE.gba-flashcartio](LICENSE.gba-flashcartio).
 - **EZ-Flash Omega `disc_io`** lineage — Apache-2.0, see
   [LICENSE.ezfo-disc_io](LICENSE.ezfo-disc_io).
+- **libtonc** by J Vijn (cearn) — GBA library (text, input, video) — MIT, see
+  [LICENSE.libtonc](LICENSE.libtonc).
 
 ## Disclaimer
 
 This is unofficial homebrew. It is **not affiliated with, endorsed by, or
 sponsored by** Nintendo, EZ-Flash, or Krikzz/EverDrive. "Game Boy Advance",
 "EZ-Flash", and "EverDrive" are trademarks of their respective owners, used here
-only to describe compatibility. The project **ships no copyrighted content** —
-bring your own files. Use it at your own risk and back up your microSD card.
+only to describe compatibility. The project **ships no game content** (no ROMs, BIOS,
+saves or game art) — bring your own files. Pokémon is a trademark of Nintendo /
+Creatures Inc. / GAME FREAK inc.; game-title file names visible in the screenshots
+are names on a demo card and no game content is included. Use it at your own risk and back up your microSD card.
 
 ## Prior art
 

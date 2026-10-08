@@ -5,7 +5,7 @@ shortcuts, SELECT+key combos, the `/file_browser_gba/` folder, the post-swap sav
 the cart-detection fixes) were built and checked on a PC only: host test suites, fault-injection
 runs of the save path, and twelve scripted chains on a virtual SD card under mGBA. **None of it
 has run on a cartridge yet.** The hardware checklist for it is `HARDWARE-SIGNOFF.md` rows
-B52–B63; until those are signed, treat v1.1 as beta on real hardware. Every write keeps a
+B52–B64; until those are signed, treat v1.1 as beta on real hardware. Every write keeps a
 `.bak~` and all new files live in one folder, so a bad outcome is easy to inspect and undo.
 
 **v1.0.0 — HARDWARE-VALIDATED on a Game Boy Advance SP + EZ-Flash Omega DE —
@@ -20,8 +20,9 @@ per-cart block drivers, the cartridge RTC and the logger) is vendored into
 `lib/` + `source/`, so the repo builds standalone (`./build.sh`, or `make
 rebuild` with a local devkitARM) with no external checkout.
 
-## Validated on real hardware (GBA SP + EZ-Flash Omega DE)
-- **Tested on the actual cartridge — there were ZERO emulator runs.** Every read
+## v1.0.0 feature set — validated on real hardware (GBA SP + EZ-Flash Omega DE)
+- **Tested on the actual cartridge (v1.0.0; there were zero emulator runs at the
+  time).** Every read
   AND write feature (P0–P7) has been exercised on a Game Boy Advance SP with an
   EZ-Flash Omega DE and works: browsing / sort / search / properties / free-space
   / viewers, new file+folder, rename/move, copy/cut/paste (incl. recursive folder

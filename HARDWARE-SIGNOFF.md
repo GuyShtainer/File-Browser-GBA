@@ -3,11 +3,15 @@
 > **STATUS (2026-06-15): P0–P7 are HARDWARE-VALIDATED — including the recycle bin
 > (Trash).** The developer ran the whole tool — browsing and every write op, plus
 > Trash move/restore/empty (B45–B50) — on a **Game Boy Advance SP + EZ-Flash Omega
-> DE** (there were no emulator runs); everything works. Treat **B1–B50 as PASS**
+> DE** (there were no emulator runs at the time); everything in that set works. Treat **B1–B50 as PASS**
 > unless a specific regression is found. The **one new item still to check** is
 > **B51 — auto-clear old trash** (added after the pass; opt-in, fails safe).
 > (EverDrive GBA X5 stays read-only; its reboot-to-loader path is the one other
 > unproven detail.)
+>
+> **UPDATE (2026-10-09, v1.1.0): rows B52–B64 are PENDING.** The text editor, pins, START-menu shortcuts, button
+> combos, the `/file_browser_gba/` folder and the post-swap save re-verify (B52–B64) and the cart-detection fixes
+> (B64) have not run on a cartridge; v1.1.0 shipped as *not hardware-tested*.
 
 The gate for calling the whole tool **done**. Supersedes the per-phase list in
 `HARDWARE-TEST-PHASE1.md`. SD log path is `/file_browser_gba/log.txt` (was `/file_browser_gba_log.txt` before v1.1) (card root, flushed
@@ -539,7 +543,7 @@ RTC is unreadable, it deletes nothing.
 
 ---
 
-# v1.1 candidate addendum - text editor, pins, shortcuts, button combos  -> B52-B63  (write, Omega-only)
+# v1.1 candidate addendum - text editor, pins, shortcuts, button combos  -> B52-B64  (write, Omega-only)
 
 The SD write/rename path now runs under the virtual-SD harness (`make vsd`,
 `tools/vsd_chains.py`, see the README's development section), which is the evidence cited per
@@ -649,3 +653,13 @@ hardware-only. All new files live in `/file_browser_gba/`.
 - Evidence: EMU+VSD chain 7 (`lie_after` sweep: every k where the new file is not the final state
   now shows `shows-other`, was `believes-saved` for k=14-19) + host_save_test cases 5/5b/5c
   (dropped rename; same-length different bytes; healthy control). Not run on hardware.
+
+## (V11-13) Cart-detection fixes  -> B64
+- What: page detection verifies the running page's content instead of one ROM-header word (a stale
+  same-titled copy in PSRAM or on a lower NOR page used to be mapped instead -> hang at "Detecting
+  flashcart..."); NO_PAGE -> PSRAM fallback; a "No flashcart! det=... pg=..." halt screen instead of a
+  blank freeze; `REG_IME` restored after a failed EverDrive probe.
+- [ ] SD-load the tool while an older same-titled copy sits in PSRAM/NOR; cold boot from NOR. Expect the
+      browser to open and `log.txt` to carry `flashcart detect: code=... ezfo_page=0x... lookalikes=...`.
+      PASS / FAIL / NOTES: ______________________________
+- Status: not run on hardware; ported from the same fix in PokeDNA.

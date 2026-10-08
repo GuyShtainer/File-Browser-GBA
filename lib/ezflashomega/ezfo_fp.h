@@ -1,6 +1,6 @@
 /* ezfo_fp.h -- the EZ-Flash "which page am I on" fingerprint, ONE definition shared by
  * the driver (io_ezfo.c, where it is forced inline into an EWRAM_CODE function and reads
- * the cart window) and the host test (tests/host_fpwalk_test.c, where it walks heap
+ * the cart window) and the host walk test (kept in the author's toolkit; not shipped here), where it walks heap
  * buffers). Pure C: <stdint.h> only, no GBA headers, no division, no memset.
  *
  * An image spanning [lo, hi) is sampled at EZFO_FP_WINS windows of EZFO_FP_BYTES: window

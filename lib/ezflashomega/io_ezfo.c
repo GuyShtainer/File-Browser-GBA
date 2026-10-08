@@ -1,6 +1,9 @@
 /*
   io_ezfo.c
   Hardware Routines for reading the EZ Flash Omega filesystem
+
+  Modified for File-Browser-GBA (2026): page detection by content, NO_PAGE->PSRAM fallback,
+  REG_IME restore on a failed probe (see git log -- lib/ezflashomega/io_ezfo.c).
 */
 
 #include "io_ezfo.h"
