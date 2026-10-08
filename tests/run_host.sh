@@ -8,3 +8,5 @@ trap 'rm -rf "$OUT"' EXIT
 CF="-std=c99 -Wall -Wextra -Werror -O1"
 cc $CF -o "$OUT/text" host_text_test.c ../source/textbuf.c
 "$OUT/text"
+cc $CF -o "$OUT/pathlist" host_pathlist_test.c ../source/pathlist.c
+"$OUT/pathlist"

@@ -1,5 +1,5 @@
 /*
- * INI settings for the SD file browser (/file_browser_gba.cfg). GBA-only (FatFs).
+ * INI settings for the SD file browser (APP_DIR/settings.cfg, old root /file_browser_gba.cfg read as a fallback). GBA-only (FatFs).
  * Large buffers live in EWRAM (.sbss) so they never sit on the 32 KiB IWRAM
  * stack. Generalized from the record-mixer's app_config.c (one key) to the
  * browser's full Settings struct. Reads work on both carts; writes are
@@ -43,10 +43,10 @@ static int to_int(const char* v) {
 }
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 
-void cfg_load(const char* path) {
+bool cfg_load(const char* path) {
   cfg_defaults();
   FIL f;
-  if (f_open(&f, path, FA_READ) != FR_OK) return;     /* no file: keep defaults */
+  if (f_open(&f, path, FA_READ) != FR_OK) return false;     /* no file: keep defaults */
   /* Our own file is ~400 B; 2 KiB leaves generous room for hand edits/comments.
    * A file larger than this is read-truncated (later keys lost) and just falls
    * back to defaults for those keys — acceptable for non-critical config. */
@@ -54,7 +54,7 @@ void cfg_load(const char* path) {
   UINT br = 0;
   FRESULT fr = f_read(&f, buf, sizeof(buf) - 1, &br);
   f_close(&f);
-  if (fr != FR_OK || br == 0) return;
+  if (fr != FR_OK || br == 0) return true;      /* exists but unreadable/empty: defaults */
   buf[br] = 0;
 
   char* p = buf;
@@ -99,6 +99,7 @@ void cfg_load(const char* path) {
       g_set.last_dir[i] = 0;
     }
   }
+  return true;
 }
 
 bool cfg_save(const char* path) {

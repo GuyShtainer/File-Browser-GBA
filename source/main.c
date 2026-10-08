@@ -35,11 +35,20 @@
 #include "osk.h"
 #include "txtedit.h"
 #include "textbuf.h"
+#include "pathlist.h"
 #include "cfg.h"
 #include "gba_rtc.h"
 
-#define LOG_PATH  "/file_browser_gba_log.txt"
-#define CFG_PATH  "/file_browser_gba.cfg"
+/* Everything the tool writes lives in ONE folder at the SD root (toolkit rule
+ * 9). The Trash (/.sdtrash) stays where it is. The pre-1.1 root-level settings
+ * file is still READ when the new one is absent (never deleted). */
+#define APP_DIR        "/file_browser_gba"
+#define LOG_PATH       APP_DIR "/log.txt"
+#define CFG_PATH       APP_DIR "/settings.cfg"
+#define CFG_PATH_OLD   "/file_browser_gba.cfg"
+#define PINS_PATH      APP_DIR "/pins.txt"
+#define SHORTCUTS_PATH APP_DIR "/shortcuts.txt"
+#define BUTTONS_PATH   APP_DIR "/buttons.txt"
 #define FS_MAX    256
 #define PATH_MAX  256
 
@@ -112,6 +121,15 @@ static bool               g_find_trunc = false;
 static char     EWRAM_BSS g_find_sel[FS_NAME_CAP];
 /* g_find_paths' row stride must equal fsop_find()'s out_paths[][FS_PATH_CAP]. */
 _Static_assert(PATH_MAX == FS_PATH_CAP, "find path row stride mismatch");
+
+/* Pinned paths (shown first in every folder) and START-menu shortcuts: packed
+ * path pools, persisted as one path per line in APP_DIR. */
+#define PIN_POOL     12288
+#define SC_POOL      4096
+#define SC_MAX       16
+static char     EWRAM_BSS g_pin_pool[PIN_POOL];
+static char     EWRAM_BSS g_sc_pool[SC_POOL];
+static PathList           g_pins, g_shortcuts;
 
 /* ---- frame tick + input ------------------------------------------------- */
 
@@ -558,6 +576,41 @@ static void properties_screen(const FsEntry* e) {
 /* ---- write actions (Phase 1: Omega-only) ------------------------------- */
 
 static bool can_write(void) { return active_flashcart == EZ_FLASH_OMEGA; }
+
+/* Create APP_DIR on the first write (Omega only); FR_EXIST is fine. */
+static void ensure_app_dir(void) {
+  static bool ok = false;
+  if (ok || !can_write()) return;
+  FRESULT fr = f_mkdir(APP_DIR);
+  if (fr == FR_OK || fr == FR_EXIST) ok = true;
+}
+
+/* Read a small text file into the shared scratch buffer. Returns the byte
+ * count, or 0 when the file is missing/unreadable/too big (== empty list). */
+static uint32_t slurp_scratch(const char* path) {
+  FIL f;
+  UINT br = 0;
+  if (f_open(&f, path, FA_READ) != FR_OK) return 0;
+  FRESULT fr = f_read(&f, g_scratch.text, sizeof(g_scratch.text), &br);
+  f_close(&f);
+  return (fr == FR_OK) ? (uint32_t)br : 0u;
+}
+
+static void load_pathlist(const char* path, PathList* l) {
+  uint32_t n = slurp_scratch(path);
+  (void)pl_parse(l, (const char*)g_scratch.text, n);   /* n==0 -> empty list */
+}
+
+/* Persist a path list (verified save, no .bak~). false = not written. */
+__attribute__((unused)) static bool save_pathlist(const char* path, const PathList* l) {
+  if (!can_write()) return false;
+  ensure_app_dir();
+  int n = pl_serialize(l, (char*)g_scratch.text, sizeof(g_scratch.text));
+  if (n < 0) return false;
+  FRESULT fr = fsop_save_buffer(path, g_scratch.text, (uint32_t)n, false);
+  if (fr != FR_OK) log_line("save %s failed fr=%d", path, (int)fr);
+  return fr == FR_OK;
+}
 
 static const char* fr_str(FRESULT fr) {
   switch (fr) {
@@ -1476,7 +1529,7 @@ static bool settings_menu(void) {
   g_sortkey = (FsSortKey)g_set.sort_key;
   g_sortrev = g_set.sort_rev;
   key_repeat_limits(g_set.key_delay, g_set.key_speed);
-  if (can_write()) cfg_save(CFG_PATH);
+  if (can_write()) { ensure_app_dir(); cfg_save(CFG_PATH); }
   return need_rescan;
 }
 
@@ -1487,7 +1540,7 @@ static bool settings_menu(void) {
 static void do_reboot(void) {
   if (!confirm("Reboot to loader?", "Return to the flashcart menu")) return;
   strcpy(g_set.last_dir, g_cwd);
-  if (can_write()) cfg_save(CFG_PATH);
+  if (can_write()) { ensure_app_dir(); cfg_save(CFG_PATH); }
   show_msg("Rebooting...", NULL);
   VBlankIntrWait();                 /* let the message paint before we tear down */
   flashcartio_reboot();             /* no return on a real flashcart */
@@ -2567,13 +2620,19 @@ int main(void) {
   if (fr != FR_OK) { log_line("f_mount failed (fr=%d)", fr); halt_msg("SD mount failed!"); }
   log_line("SD mounted OK");
 
+  pl_init(&g_pins, g_pin_pool, sizeof(g_pin_pool), 0);
+  pl_init(&g_shortcuts, g_sc_pool, sizeof(g_sc_pool), SC_MAX);
+  ensure_app_dir();
   int wr = log_flush_to_sd(LOG_PATH);
   log_line("log flush -> %s", wr == 0 ? "OK" : "FAILED");
 
   /* load persisted settings (reads on both carts; missing file -> defaults),
    * apply the theme + nav tuning, and reopen the last folder if it still
    * exists (else stay at root). */
-  cfg_load(CFG_PATH);
+  if (!cfg_load(CFG_PATH)) (void)cfg_load(CFG_PATH_OLD);   /* migrate: old root file is read, left alone */
+  load_pathlist(PINS_PATH, &g_pins);
+  load_pathlist(SHORTCUTS_PATH, &g_shortcuts);
+  log_line("pins=%d shortcuts=%d", pl_count(&g_pins), pl_count(&g_shortcuts));
   theme_apply(g_set.theme);
   g_sortkey = (FsSortKey)g_set.sort_key;
   g_sortrev = g_set.sort_rev;
