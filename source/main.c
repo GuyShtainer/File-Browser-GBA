@@ -815,6 +815,7 @@ static void btn_label(int i, char* out) {
 
 static void set_slot(int i, const char* value) {
   if (!can_write()) { msg_screen("Needs EZ-Flash Omega", UI_WARN, "to save button shortcuts"); return; }
+  if (strlen(value) >= PATH_MAX) { msg_screen("Path too long", UI_WARN, NULL); return; }
   strcpy(g_btn[i], value);
   if (!save_buttons()) msg_screen("Binding changed", UI_WARN, "but not saved to SD");
 }
