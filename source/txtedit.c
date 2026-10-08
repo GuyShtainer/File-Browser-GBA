@@ -30,6 +30,7 @@ static TbRow EWRAM_BSS s_rows[TB_MAXROWS];
 
 static uint32_t s_caret, s_top;
 static bool     s_kb;
+static bool     s_kb_armed;   /* false until A is released after opening the keyboard */
 static int      s_page, s_kr, s_kc;
 static const char* s_note;
 static bool     s_saved_any;
@@ -125,7 +126,7 @@ static bool tx_save(const char* path, const char* name) {
   if (fr != FR_OK) { tx_save_error(fr, path, name); return false; }
   tb_clean();
   s_saved_any = true;
-  s_note = "Saved - original kept as .bak~";
+  s_note = "Saved - previous kept as .bak~";
   return true;
 }
 
@@ -216,6 +217,10 @@ static void tx_backspace(void) {
 
 /* Returns after handling one frame's input in Type mode. */
 static void tx_input_type(u16 mv, u16 hit) {
+  /* the A that opened the keyboard must not auto-repeat into a typed key */
+  if (!s_kb_armed) {
+    if (key_is_down(KEY_A)) mv &= (u16)~KEY_A; else s_kb_armed = true;
+  }
   if (hit & KEY_START) { s_kb = false; return; }
   /* Clamp the column on a page switch: repro was abc page, top row, LEFT (col 9),
      SELECT, SELECT, A - the shorter row on the new page was indexed past its end. */
@@ -275,7 +280,7 @@ static bool tx_input_nav(u16 mv, u16 hit, const char* path, const char* name) {
   if (hit & KEY_B)      return tx_try_exit(path, name);
   if (hit & KEY_START)  return tx_menu(path, name);
   if (hit & KEY_SELECT) { tx_undo(); return false; }
-  if (hit & KEY_A)      { s_kb = true; return false; }
+  if (hit & KEY_A)      { s_kb = true; s_kb_armed = false; return false; }
   if (mv & KEY_L)       { tx_page(false); return false; }
   if (mv & KEY_R)       { tx_page(true); return false; }
   if (mv & KEY_UP)      s_caret = tb_caret_up(s_caret);
@@ -288,8 +293,8 @@ static bool tx_input_nav(u16 mv, u16 hit, const char* path, const char* name) {
 static void tx_render(const char* name) {
   char hdr[48], nb[48], st[64];
   ui_clear();
-  ui_truncate(nb, name, s_kb ? 9 : 12);
-  siprintf(hdr, s_kb ? "%s  A=key B=del ST=done" : "%s  A=kbd ST=menu", nb);
+  ui_truncate(nb, name, s_kb ? 9 : 7);
+  siprintf(hdr, s_kb ? "%s  A=key B=del ST=done" : "%s A=kbd ST=menu SE=undo", nb);
   ui_truncate(hdr, hdr, 29);
   ui_text(2, 0, UI_TITLE, hdr);
   tx_draw_text();

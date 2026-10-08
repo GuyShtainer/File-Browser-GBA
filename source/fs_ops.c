@@ -536,13 +536,13 @@ FRESULT fsop_apply_edits(const char* path, const HexEdit* edits, int n) {
 
 /* ---- verified buffer save (text editor, app config files) -------------- */
 
-bool fsop_same_chain(const char* a, const char* b) {
+int fsop_same_chain(const char* a, const char* b) {
   FIL fa, fb;
-  bool same = false;
-  if (a == NULL || b == NULL) return false;
-  if (f_open(&fa, a, FA_READ) != FR_OK) return false;
+  int same = -1;                                     /* unknown until both opened */
+  if (a == NULL || b == NULL) return -1;
+  if (f_open(&fa, a, FA_READ) != FR_OK) return -1;
   if (f_open(&fb, b, FA_READ) == FR_OK) {
-    same = (fa.obj.sclust != 0 && fa.obj.sclust == fb.obj.sclust);
+    same = (fa.obj.sclust != 0 && fa.obj.sclust == fb.obj.sclust) ? 1 : 0;
     f_close(&fb);
   }
   f_close(&fa);
@@ -587,7 +587,7 @@ static FRESULT save_swap(const char* path, const char* tmp, const char* bak, boo
   FILINFO fno;
   if (!existed) return f_rename(tmp, path);
   if (f_stat(bak, &fno) == FR_OK) {                 /* replace a prior backup */
-    if (fsop_same_chain(path, bak)) return FSOP_ERR_SHARED;   /* unlink would free path's data */
+    if (fsop_same_chain(path, bak) != 0) return FSOP_ERR_SHARED;   /* shared OR unknown: never unlink */
     if (fno.fattrib & AM_RDO) f_chmod(bak, 0, AM_RDO);
     fr = f_unlink(bak);
     if (fr != FR_OK) return fr;

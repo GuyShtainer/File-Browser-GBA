@@ -105,11 +105,13 @@ static bool               g_selmode = false;
  * Find action. g_find_sel holds the entry name to re-select after a find
  * navigates the browser into the match's folder ("" = none). */
 #define FIND_MAX 128
-/* g_scratch overlays two never-simultaneous users: the Find results (live only
+/* g_scratch overlays four never-simultaneous users: the Find results (live only
  * inside find_modal(); g_find_sel is copied out before it returns, and nothing
- * else reads g_find_paths/g_find_count) and the text editor's edit buffer
- * (live only inside txtedit_run(), which actions_menu calls and find_modal is
- * not running). */
+ * else reads g_find_paths/g_find_count), the text editor's edit buffer (live
+ * only inside txtedit_run(), which actions_menu calls and find_modal is not
+ * running), and the .text staging of the boot-time load (slurp_scratch ->
+ * load_pathlist/load_buttons) and of save_pathlist/save_buttons (each fills and
+ * consumes it within one call). */
 typedef union {
   char    find_paths[FIND_MAX][PATH_MAX];
   uint8_t text[TB_CAP];
@@ -642,7 +644,16 @@ static void ensure_app_dir(void) {
 static uint32_t slurp_scratch(const char* path) {
   FIL f;
   UINT br = 0;
-  if (f_open(&f, path, FA_READ) != FR_OK) return 0;
+  FRESULT fo = f_open(&f, path, FA_READ);
+  if (fo == FR_NO_FILE) {            /* power cut between the two renames of a save: use the .bak~ */
+    char bak[PATH_MAX + 8];
+    if (strlen(path) + 6 <= sizeof(bak)) {
+      siprintf(bak, "%s.bak~", path);
+      fo = f_open(&f, bak, FA_READ);
+      if (fo == FR_OK) log_line("loaded %s from .bak~ (file missing)", path);
+    }
+  }
+  if (fo != FR_OK) return 0;
   FRESULT fr = f_read(&f, g_scratch.text, sizeof(g_scratch.text), &br);
   f_close(&f);
   return (fr == FR_OK) ? (uint32_t)br : 0u;
@@ -653,6 +664,14 @@ static void load_pathlist(const char* path, PathList* l) {
   (void)pl_parse(l, (const char*)g_scratch.text, n);   /* n==0 -> empty list */
 }
 
+/* A save was refused because "<file>.txtnew~" is still there: name it. */
+static void msg_screen(const char* title, u16 ink, const char* body);
+static void save_leftover_msg(const char* path) {
+  char l1[PATH_MAX + 16];
+  siprintf(l1, "%s.txtnew~ left over", base_name(path));
+  msg_screen(l1, UI_WARN, "check it first");
+}
+
 /* Persist a path list (verified save, no .bak~). false = not written. */
 static bool save_pathlist(const char* path, const PathList* l) {
   if (!can_write()) return false;
@@ -661,6 +680,7 @@ static bool save_pathlist(const char* path, const PathList* l) {
   if (n < 0) return false;
   FRESULT fr = fsop_save_buffer(path, g_scratch.text, (uint32_t)n, false);
   if (fr != FR_OK) log_line("save %s failed fr=%d", path, (int)fr);
+  if (fr == FSOP_ERR_LEFTOVER) save_leftover_msg(path);
   return fr == FR_OK;
 }
 
@@ -799,6 +819,7 @@ static bool save_buttons(void) {
   }
   FRESULT fr = fsop_save_buffer(BUTTONS_PATH, g_scratch.text, (uint32_t)n, false);
   if (fr != FR_OK) log_line("save buttons failed fr=%d", (int)fr);
+  if (fr == FSOP_ERR_LEFTOVER) save_leftover_msg(BUTTONS_PATH);
   return fr == FR_OK;
 }
 
@@ -1691,7 +1712,7 @@ static bool settings_menu(void) {
         }
         ui_text_sel(4, 14 + i * 9, 232, i == sel, UI_TEXT, row);
       }
-      ui_text(2, FOOT_Y, UI_DIM, "UD pick LR chg A save B back");
+      ui_text(2, FOOT_Y, UI_DIM, sel == S_BUTTONS ? "UD pick  A open  B back" : "UD pick LR chg A save B back");
       dirty = false;
     }
     vsync();

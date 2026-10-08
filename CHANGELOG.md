@@ -46,6 +46,13 @@ GitHub releases.
   to freeze with a blank screen; it now shows `No flashcart! det=6 pg=ffff` so the
   state is reportable. (Reliable when the tool was launched from the SD card.)
 
+### Known issues (v1.1 candidate)
+- The hex editor save path (`fsop_apply_edits`) still lacks the leftover-temp and
+  shared-chain guards that the text editor / pin / shortcut saves have (follow-up).
+- Saving over a read-only `pins.txt` drops its read-only flag.
+- SELECT on a START-menu shortcut row removes it without a confirm (by design; the footer says so).
+- `cfg_load` falls back to the old root config on a transient open error of `settings.cfg`.
+
 ## [1.0.0] — 2026-06-29
 ### Changed
 - **1.0 — stable.** No functional changes since 0.12.0 — the same hardware-validated

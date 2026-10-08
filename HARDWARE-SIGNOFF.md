@@ -598,3 +598,7 @@ eyeballed on the real cart. All new files live in `/file_browser_gba/`.
 - [ ] On a card with an old root `/file_browser_gba.cfg`: first launch shows the old
       settings; after changing one, `/file_browser_gba/settings.cfg` and `log.txt`
       exist and the old root file is untouched. PASS / FAIL / NOTES: ____________
+
+## (V11-11) Pins/shortcuts/buttons load from `.bak~` when the file is missing  -> B62
+- [ ] Rename `/file_browser_gba/pins.txt` to `pins.txt.bak~` on the card, boot: pins
+      still appear and log.txt has "loaded ... from .bak~". PASS / FAIL / NOTES: ____

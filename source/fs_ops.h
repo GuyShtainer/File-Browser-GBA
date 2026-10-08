@@ -114,9 +114,10 @@ FRESULT fsop_apply_edits(const char* path, const HexEdit* edits, int n);
 #define FSOP_ERR_LEFTOVER ((FRESULT)100)   /* "<path>.txtnew~" already exists   */
 #define FSOP_ERR_SHARED   ((FRESULT)101)   /* "<path>.bak~" shares data with path */
 
-/* True when files `a` and `b` both exist and start at the same non-zero cluster
- * (one cluster chain with two names - what a cut inside f_rename can leave). */
-bool fsop_same_chain(const char* a, const char* b);
+/* 1 when files `a` and `b` both exist and start at the same non-zero cluster
+ * (one cluster chain with two names - what a cut inside f_rename can leave),
+ * 0 when they do not, -1 when unknown (an open failed). Callers treat -1 like 1. */
+int fsop_same_chain(const char* a, const char* b);
 
 /* Verified save of an in-memory buffer to `path`: writes "<path>.txtnew~",
  * re-reads it and memcmp's against `data`, then (if `path` exists) renames the
