@@ -19,3 +19,5 @@ SI="-std=gnu99 -Wall -Wextra -O1 -I hostfat -I $OUT/fatfs -I ../source"
 cc $SI -include hostfat/wrap.h -c -o "$OUT/fs_ops.o" ../source/fs_ops.c   # wrap.h only for this one file
 cc $SI -o "$OUT/save" host_save_test.c hostfat/ramdisk.c "$OUT/fs_ops.o" "$OUT/fatfs/ff.c" "$OUT/fatfs/ffunicode.c"
 "$OUT/save"
+# the virtual-SD image factory + its host test (own private FF_USE_MKFS copy of lib/fatfs)
+sh ../tools/build_vsd_host.sh
