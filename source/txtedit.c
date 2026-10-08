@@ -211,7 +211,13 @@ static void tx_backspace(void) {
 /* Returns after handling one frame's input in Type mode. */
 static void tx_input_type(u16 mv, u16 hit) {
   if (hit & KEY_START) { s_kb = false; return; }
-  if (hit & KEY_SELECT) { s_page = (s_page + 1) % PAGES; return; }
+  /* Clamp the column on a page switch: repro was abc page, top row, LEFT (col 9),
+     SELECT, SELECT, A - the shorter row on the new page was indexed past its end. */
+  if (hit & KEY_SELECT) {
+    s_page = (s_page + 1) % PAGES;
+    if (s_kc >= kb_rowlen(s_kr)) s_kc = kb_rowlen(s_kr) - 1;
+    return;
+  }
   if (mv & KEY_A) { tx_press_key(); return; }
   if (mv & KEY_B) { tx_backspace(); return; }
   if (mv & KEY_L) { s_caret = tb_caret_left(s_caret); return; }
