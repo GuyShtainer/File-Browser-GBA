@@ -5,7 +5,13 @@ All notable changes to **File-Browser-GBA**. Format loosely follows
 GitHub releases.
 
 ## [Unreleased]
-### Added (v1.1.0 candidate - UI/SD behaviour is hardware-unverified)
+
+## [1.1.0] — 2026-10-09
+> **Not hardware-tested.** Everything in 1.1.0 was built and checked on a PC (host suites,
+> fault-injection runs of the save path, twelve scripted chains on a virtual SD card under
+> mGBA); none of it has run on a cartridge yet. Checklist: `HARDWARE-SIGNOFF.md` rows B52–B63.
+
+### Added (Omega-only writes)
 - **On-screen text editor** (actions menu -> *Edit text*, Omega-only, files up to 32 KiB).
   Navigate mode (D-pad caret, L/R page, A keyboard, SELECT undo, START menu, B exit)
   and Type mode (3-page on-screen keyboard + Space/Enter/Tab). Keeps the file's own
@@ -55,7 +61,7 @@ GitHub releases.
   instead of "Saved". Found by the virtual-SD `lie_after` sweep (chain 7). The hex editor's
   save path does not have this yet (Known issues).
 
-### Known issues (v1.1 candidate)
+### Known issues
 - The hex editor save path (`fsop_apply_edits`) still lacks the leftover-temp and
   shared-chain guards that the text editor / pin / shortcut saves have, nor the post-swap
   re-verify (follow-up).

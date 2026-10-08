@@ -2,6 +2,9 @@
 
 > **Superseded by [HARDWARE-SIGNOFF.md](HARDWARE-SIGNOFF.md)** — the consolidated
 > master checklist covering all of Phases 0–3. This file is kept for history.
+>
+> Path note (v1.1): the log is now `/file_browser_gba/log.txt`; the root
+> `/file_browser_gba_log.txt` named below was the v1.0 location.
 
 Per CLAUDE.md convention 7, Phase 1 (mkdir / delete / attributes) is **not "done"
 until validated on real hardware** — the SD write path is invisible to emulators

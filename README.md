@@ -42,6 +42,13 @@ Screenshots come from the virtual-SD harness under mGBA (`make vsd`, `tools/vsd_
 
 ## Status
 
+**v1.1.0 — NOT hardware-tested.** The text editor, pins, START-menu shortcuts,
+SELECT+key combos, the `/file_browser_gba/` folder and the cart-detection fixes were built
+and checked on a PC only (host suites, save-path fault injection, twelve scripted chains on a
+virtual SD card under mGBA). None of it has run on a cartridge yet — treat it as beta on real
+hardware; every write keeps a `.bak~`. Checklist: [HARDWARE-SIGNOFF.md](HARDWARE-SIGNOFF.md)
+rows B52–B63.
+
 **v1.0 — stable.** Feature-complete and fully hardware-validated, including the
 reworked Trash view (sort cycle / origin-path rows / restore / days-left countdown).
 
@@ -151,7 +158,7 @@ menu (always present on **both** carts):
   kernel) instead of power-cycling. **Confirmed working on the EZ-Flash Omega
   DE.** Writes no data. (The EverDrive path is less tested.)
 
-**Editing, pins and shortcuts (v1.1 candidate, Omega-only writes)**:
+**Editing, pins and shortcuts (v1.1, Omega-only writes — not hardware-tested yet)**:
 
 - **Text editor** - *Edit text* in the actions menu opens files up to 32 KiB with an
   on-screen keyboard, undo, CRLF/LF preservation and a verified save that keeps the

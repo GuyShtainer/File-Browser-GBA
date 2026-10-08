@@ -1,10 +1,19 @@
 # File-Browser-GBA — release status
 
-**Status: v1.0.0 — HARDWARE-VALIDATED on a Game Boy Advance SP + EZ-Flash Omega DE —
-the whole tool, including the recycle bin (Trash) and its reworked view, works on
+**Status: v1.1.0 — NOT hardware-tested.** The v1.1 additions (text editor, pins, START-menu
+shortcuts, SELECT+key combos, the `/file_browser_gba/` folder, the post-swap save re-verify,
+the cart-detection fixes) were built and checked on a PC only: host test suites, fault-injection
+runs of the save path, and twelve scripted chains on a virtual SD card under mGBA. **None of it
+has run on a cartridge yet.** The hardware checklist for it is `HARDWARE-SIGNOFF.md` rows
+B52–B63; until those are signed, treat v1.1 as beta on real hardware. Every write keeps a
+`.bak~` and all new files live in one folder, so a bad outcome is easy to inspect and undo.
+
+**v1.0.0 — HARDWARE-VALIDATED on a Game Boy Advance SP + EZ-Flash Omega DE —
+the whole tool as of 1.0, including the recycle bin (Trash) and its reworked view, works on
 the real cartridge. Builds clean (zero warnings).**
 
-`file_browser_gba.gba` — ROM ~130 KB, IWRAM ~11.9 KB / 32 KB, EWRAM well within 256 KB.
+`file_browser_gba.gba` — ROM ~160 KB, IWRAM ~12.1 KB / 32 KB, EWRAM 255,760 B of 256 KiB
+(the Find/editor overlay is 32 KiB of that).
 
 **Self-contained:** the shared hardware/FS layer (flashcartio, FatFs, the
 per-cart block drivers, the cartridge RTC and the logger) is vendored into
