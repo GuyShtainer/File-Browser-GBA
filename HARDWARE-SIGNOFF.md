@@ -10,7 +10,7 @@
 > unproven detail.)
 >
 > **UPDATE (2026-10-09, v1.1.0): rows B52–B64 are PENDING.** The text editor, pins, START-menu shortcuts, button
-> combos, the `/file_browser_gba/` folder and the post-swap save re-verify (B52–B64) and the cart-detection fixes
+> combos, the `/file_browser_gba/` folder and the post-swap save re-verify (B52–B63) and the cart-detection fixes
 > (B64) have not run on a cartridge; v1.1.0 shipped as *not hardware-tested*.
 
 The gate for calling the whole tool **done**. Supersedes the per-phase list in
