@@ -45,7 +45,6 @@ HOLD = 3             # frames a key is physically down
 SETTLE = 12          # frames of nothing after a key edge
 QUIESCE_IDLE = 4     # consecutive no-request frames that mean "I/O settled"
 QUIESCE_CAP = 3600   # a tap that never quiesces is a loud failure
-DEFAULT_VENDOR = Path("/Users/guyshtainer/VSCodeProjects/gba-toolkit/projects/rec2mp4/vendor")
 VSD_IMG_BIN = Path("/tmp/vsd_img")   # built by tools/build_vsd_host.sh
 NM_FALLBACK = "/opt/devkitpro/devkitARM/bin/arm-none-eabi-nm"
 
@@ -54,10 +53,22 @@ class RunnerError(Exception):
     """A harness-level failure (missing tool, unexpected card change, no quiesce)."""
 
 
+def _default_vendor() -> Path:
+    """mGBA Python bindings: $VSD_MGBA_VENDOR, else rec2mp4's vendor dir next to this repo
+    (gba-toolkit/projects/rec2mp4/vendor from the toolkit, ../rec2mp4/vendor from a sub-project)."""
+    here = Path(__file__).resolve()
+    cands = [Path(os.environ["VSD_MGBA_VENDOR"])] if os.environ.get("VSD_MGBA_VENDOR") else []
+    cands += [here.parents[1] / "projects" / "rec2mp4" / "vendor", here.parents[2] / "rec2mp4" / "vendor"]
+    for c in cands:
+        if c.is_dir():
+            return c
+    raise RunnerError("mGBA bindings not found; set VSD_MGBA_VENDOR to rec2mp4's vendor directory")
+
+
 def load_mgba(vendor: "Path | None" = None):
     """Imports the mGBA bindings from `vendor` (default: rec2mp4's vendor dir, or the
     VSD_MGBA_VENDOR environment variable) and silences their per-instruction logging."""
-    vend = Path(vendor or os.environ.get("VSD_MGBA_VENDOR") or DEFAULT_VENDOR)
+    vend = Path(vendor) if vendor else _default_vendor()
     if not vend.is_dir():
         raise RunnerError(f"mGBA vendor path missing: {vend}")
     sys.path.insert(0, str(vend))
