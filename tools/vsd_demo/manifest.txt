@@ -252,14 +252,7 @@
 123	CHEAT/Eng/0200/0317.cht
 261	CHEAT/Eng/0200/0318.cht
 192	CHEAT/Eng/0200/0319.cht
-16777216	GBA/Pokemon/POKEMON_EMER_BPEE00 tests.gba
-16777216	GBA/Pokemon/POKEMON_EMER_BPEE00.gba
-16777216	GBA/Pokemon/POKEMON_FIRE_BPRE01.gba
-16777216	GBA/Pokemon/POKEMON_LEAF_BPGE00 tests.gba
-16777216	GBA/Pokemon/POKEMON_LEAF_BPGE00.gba
-16777216	GBA/Pokemon/POKEMON_RUBY_AXVE02 tests.gba
-16777216	GBA/Pokemon/POKEMON_RUBY_AXVE02.gba
-16777216	GBA/Pokemon/POKEMON_SAPP_AXPE01.gba
+#dir	GBA
 524288	GBC/LAMEBOY.SAV
 214080	GBC/lameboy.nds
 320	PATCH/POKEMON_EMER_BPEE00 tests.pat
@@ -272,9 +265,7 @@
 320	PATCH/file_browser_gba.pat
 39	PokeDNA/PokeDNA.cfg
 328	PokeDNA/config.cfg
-2539632	PokeDNA/sprites.pak
 48	PokeDNA/art/art.idx
-451096	PokeDNA/art/icons.bin
 458752	RTS/POKEMON_EMER_BPEE00 tests.rts
 458752	RTS/POKEMON_EMER_BPEE00.rts
 458752	RTS/POKEMON_FIRE_BPRE01.rts
@@ -300,7 +291,6 @@
 131072	SAVER/POKEMON_RUBY_AXVE02.sav
 131072	SAVER/POKEMON_SAPP_AXPE01 tests.sav
 131072	SAVER/POKEMON_SAPP_AXPE01.sav
-65536	SAVER/PokeDNA-NOR.sav
 65536	SAVER/PokeDNA-artless.sav
 65536	SAVER/PokeDNA.sav
 65536	SAVER/PokeLinkSim-Turbo.sav
@@ -383,10 +373,8 @@
 121	pokelinksim/settings.ini
 53	rgb_lab/rgb_lab.cfg
 76	rumble_lab/rumble_lab.cfg
-6562248	tools/PokeDNA-NOR.gba
-9699220	tools/PokeDNA-SD.gba
 949296	tools/PokeDNA-artless.gba
-7677696	tools/PokeDNA.gba
+983040	tools/PokeDNA.gba
 173540	tools/PokeLinkSim-Turbo.gba
 1651020	tools/PokeLinkSim.gba
 146972	tools/file_browser_gba.gba
