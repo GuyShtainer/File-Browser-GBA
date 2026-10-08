@@ -539,7 +539,7 @@ RTC is unreadable, it deletes nothing.
 
 ---
 
-# v1.1 candidate addendum - text editor, pins, shortcuts, button combos  -> B52-B61  (write, Omega-only)
+# v1.1 candidate addendum - text editor, pins, shortcuts, button combos  -> B52-B62  (write, Omega-only)
 
 None of this is emulated: the SD write/rename path and the on-screen UI must be
 eyeballed on the real cart. All new files live in `/file_browser_gba/`.
@@ -547,7 +547,7 @@ eyeballed on the real cart. All new files live in `/file_browser_gba/`.
 ## (V11-1) Edit + save + .bak~ on a real file  -> B52
 - [ ] Edit text on a small `.txt`: type with the keyboard (all 3 pages, Space, Enter,
       Tab), move the caret in Navigate mode, undo with SELECT. Save (START menu).
-      Message `Saved - original kept as .bak~`; PC check: the file has the edit,
+      Message `Saved - previous kept as .bak~`; PC check: the file has the edit,
       `<file>.bak~` is the original byte for byte, no `.txtnew~` remains.
 - [ ] Exit with unsaved changes asks Save and exit / Exit without saving / Cancel.
 - [ ] Read-only file -> `File is read-only`, editor does not open. File > 32 KiB: no
@@ -600,5 +600,10 @@ eyeballed on the real cart. All new files live in `/file_browser_gba/`.
       exist and the old root file is untouched. PASS / FAIL / NOTES: ____________
 
 ## (V11-11) Pins/shortcuts/buttons load from `.bak~` when the file is missing  -> B62
-- [ ] Rename `/file_browser_gba/pins.txt` to `pins.txt.bak~` on the card, boot: pins
-      still appear and log.txt has "loaded ... from .bak~". PASS / FAIL / NOTES: ____
+- [ ] On the PC rename `/file_browser_gba/pins.txt` to `pins.txt.bak~` AND create an
+      empty `pins.txt.txtnew~` next to it (what a power cut between a save's two
+      renames leaves); boot: pins still appear and log.txt has
+      "loaded ... from .bak~ (file missing, temp present)". Then *Pin to top* on any
+      entry is refused with "pins.txt.txtnew~ / left over - check it first"; delete
+      the temp on the PC and pinning works again. Control: with ONLY `pins.txt.bak~`
+      (no temp) the boot shows no pins. PASS / FAIL / NOTES: ____

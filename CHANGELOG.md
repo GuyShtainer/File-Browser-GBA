@@ -11,7 +11,7 @@ GitHub releases.
   and Type mode (3-page on-screen keyboard + Space/Enter/Tab). Keeps the file's own
   CRLF/LF line endings, shows `Ln/Col/*/undo/CRLF`, warns before opening binary
   bytes (kept as-is on save). Saves through a verified write (`<file>.txtnew~` ->
-  byte-compare -> original kept as `<file>.bak~`); refuses with a clear message if a
+  byte-compare -> previous version kept as `<file>.bak~`); refuses with a clear message if a
   leftover `.txtnew~` exists or the `.bak~` shares data with the file.
 - **Pin to top** - pin any file/folder; pinned paths are the first rows of every
   folder in List, Grid and Column views (A jumps there, START = Open/Unpin; a
@@ -52,6 +52,9 @@ GitHub releases.
 - Saving over a read-only `pins.txt` drops its read-only flag.
 - SELECT on a START-menu shortcut row removes it without a confirm (by design; the footer says so).
 - `cfg_load` falls back to the old root config on a transient open error of `settings.cfg`.
+- A `.bak~` of `pins.txt` / `shortcuts.txt` / `buttons.txt` is used on load only when the
+  file is missing *and* its `.txtnew~` temp is present (what a power cut between a save's
+  two renames leaves); a stale `.bak~` on its own is ignored and removed by the next save.
 
 ## [1.0.0] — 2026-06-29
 ### Changed
