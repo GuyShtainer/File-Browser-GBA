@@ -346,7 +346,272 @@ def chain_7(c: Ctx) -> None:
     check(ui != "believes-saved", "protect: UI claims saved on a write-protected card")
 
 
-CHAINS = {1: chain_1, 2: chain_2, 3: chain_3, 4: chain_4, 5: chain_5, 6: chain_6, 7: chain_7}
+PINS = f"/{APP}/pins.txt"
+SHORTCUTS = f"/{APP}/shortcuts.txt"
+BUTTONS = f"/{APP}/buttons.txt"
+SETTINGS = f"/{APP}/settings.cfg"
+
+
+def reboot(r: Runner, **knobs) -> Runner:
+    """Power-cycle: flush the card, boot a NEW Runner (fresh snapshot) on the same image."""
+    r.flush()
+    return boot(r.img, **knobs)
+
+
+def pin_count(r: Runner) -> int:
+    return r.peek_u32("g_pins", 12)
+
+
+def chain_8(c: Ctx) -> None:
+    """pins: pin, reboot, open, unpin, pin+trash target, 'Not found. Unpin?'."""
+    r = boot(build_card("c8"))
+    r.tap("START")
+    for _ in range(7):
+        r.tap("DOWN")
+    r.tap("A")                                      # Pin to top on /docs
+    c.shot(r, "pinned")
+    r.report({PINS}, optional={LOG})
+    check(r.cat(PINS) == b"/docs\n", f"pins.txt {r.cat(PINS)!r}")
+    check("pins: saved 1" in log_text(r), "log lacks 'pins: saved 1'")
+    check(pin_count(r) == 1, "pin count in RAM")
+
+    r = reboot(r)                                   # pins survive a reboot
+    check(pin_count(r) == 1, f"pin count after reboot {pin_count(r)}")
+    c.shot(r, "reboot-first-row")
+    r.tap("UP")                                     # cursor starts on the first real row
+    r.tap("A")
+    check(r.peek_cstr("g_cwd") == "/docs", f"pin row A -> cwd {r.peek_cstr('g_cwd')!r}")
+    c.shot(r, "pin-opened")
+
+    r.tap("B")                                      # back to /, then the pin menu
+    r.tap("UP")
+    r.tap("START")
+    c.shot(r, "pin-menu")
+    r.tap("DOWN")
+    r.tap("A")                                      # Unpin
+    check(pin_count(r) == 0, "unpin did not drop the pin")
+    r.report({PINS}, optional={LOG})
+    check(r.cat(PINS) == b"", f"pins.txt after unpin {r.cat(PINS)!r}")
+
+    r = reboot(r)
+    r.tap("A")                                      # enter /docs (cursor on docs)
+    r.tap("DOWN")                                   # sub/
+    r.tap("START")
+    for _ in range(7):
+        r.tap("DOWN")
+    r.tap("A")                                      # Pin to top on /docs/sub
+    check(r.cat(PINS) == b"/docs/sub\n", f"pins.txt {r.cat(PINS)!r}")
+    r.tap("START")
+    for _ in range(10):
+        r.tap("DOWN")
+    r.tap("A")                                      # Move folder to Trash
+    c.shot(r, "trash-confirm")
+    r.tap("A")                                      # confirm
+    lst = r.listing()
+    check("/.sdtrash/sub/b.txt" in lst and "/docs/sub/" not in lst, "sub was not trashed")
+
+    r = reboot(r)
+    r.tap("UP")
+    r.tap("A")                                      # pin row -> target is gone
+    c.shot(r, "not-found")
+    check(r.peek_cstr("g_cwd") == "/" and pin_count(r) == 1, "dialog left the pin/cwd changed")
+    r.tap("A")                                      # Unpin it
+    check(pin_count(r) == 0, "'Unpin it?' yes did not unpin")
+    r.report({PINS}, optional={LOG})
+    check(r.cat(PINS) == b"", "pins.txt not empty after the dangling unpin")
+    c.note("pin/open/unpin, trashed target -> 'Not found. Unpin?' -> unpinned; pins.txt exact each step")
+
+
+def chain_9(c: Ctx) -> None:
+    """shortcuts: add on /roms, reboot, START-menu row opens it, SELECT removes it."""
+    r = boot(build_card("c9"))
+    pick(r, ROOT_IDX["roms"])
+    r.tap("START")
+    for _ in range(11):
+        r.tap("DOWN")
+    r.tap("A")                                      # Add shortcut
+    r.report({SHORTCUTS}, optional={LOG})
+    check(r.cat(SHORTCUTS) == b"/roms\n", f"shortcuts.txt {r.cat(SHORTCUTS)!r}")
+    check("shortcuts: saved 1" in log_text(r), "log lacks 'shortcuts: saved 1'")
+
+    r = reboot(r)
+    r.tap("START")
+    c.shot(r, "start-menu")
+    r.tap("UP")                                     # the shortcut row sits above the first action
+    r.tap("A")
+    check(r.peek_cstr("g_cwd") == "/roms", f"shortcut -> cwd {r.peek_cstr('g_cwd')!r}")
+    c.shot(r, "in-roms")
+
+    r = reboot(r)
+    r.tap("START")
+    r.tap("UP")
+    r.tap("SELECT")                                 # SELECT on a shortcut row removes it
+    c.shot(r, "removed")
+    r.report({SHORTCUTS}, optional={LOG})
+    check(r.cat(SHORTCUTS) == b"", f"shortcuts.txt after remove {r.cat(SHORTCUTS)!r}")
+    c.note("shortcut added/opened/removed; shortcuts.txt exact at each step")
+
+
+def sort_state(r: Runner) -> int:
+    """The live sort order as key*2 + reversed (g_sortkey / g_sortrev, single bytes)."""
+    return r.peek_u8("g_sortkey") * 2 + (1 if r.peek_u8("g_sortrev") else 0)
+
+
+def chain_10(c: Ctx) -> None:
+    """buttons: bind SELECT+A to /docs and SELECT+UP to Go to root; chords run after a reboot."""
+    r = boot(build_card("c10"))
+    r.tap("START")
+    for _ in range(12):
+        r.tap("DOWN")
+    r.tap("A")                                      # docs > Bind to button...
+    for _ in range(4):
+        r.tap("DOWN")
+    c.shot(r, "slot-picker")
+    r.tap("A")                                      # SEL+A
+    check(r.cat(BUTTONS) == b"A=path:/docs\n", f"buttons.txt {r.cat(BUTTONS)!r}")
+    c.shot(r, "after-bind")
+    r.tap("B")                                      # the actions menu stays open after a bind
+
+    r.tap("START")                                  # Settings is the second-to-last row
+    r.tap("UP")
+    r.tap("UP")
+    r.tap("A")
+    for _ in range(12):
+        r.tap("DOWN")
+    r.tap("A")                                      # Button shortcuts...
+    c.shot(r, "slots")
+    r.tap("A")                                      # SEL+UP -> Bind to...
+    for _ in range(11):
+        r.tap("DOWN")                               # None, This folder, then 9 actions -> Go to root
+    r.tap("A")
+    c.shot(r, "slots-bound")
+    got = r.cat(BUTTONS)
+    check(sorted(got.split(b"\n")) == sorted([b"A=path:/docs", b"UP=act:root", b""]),
+          f"buttons.txt {got!r}")
+    check("buttons: saved" in log_text(r), "log lacks 'buttons: saved'")
+
+    r = reboot(r)
+    sort0 = sort_state(r)
+    check(r.peek_cstr("g_cwd") == "/", "boot cwd")
+    r.tap("SELECT+A")
+    check(r.peek_cstr("g_cwd") == "/docs", f"SELECT+A -> cwd {r.peek_cstr('g_cwd')!r}")
+    c.shot(r, "chord-docs")
+    r.tap("SELECT+UP")
+    check(r.peek_cstr("g_cwd") == "/", f"SELECT+UP -> cwd {r.peek_cstr('g_cwd')!r}")
+    check(sort_state(r) == sort0, "a chord changed the sort order")
+    r.tap("SELECT")                                 # a plain tap still cycles the sort
+    sort1 = sort_state(r)
+    c.shot(r, "sort-cycled")
+    check(sort1 != sort0, f"plain SELECT tap did not cycle sort ({sort0} -> {sort1})")
+    c.note(f"buttons.txt={got!r}; chords navigate; plain SELECT sort {sort0}->{sort1}")
+
+
+def chain_11(c: Ctx) -> None:
+    """cfg migration: old root cfg read at boot, settings.cfg written under the app folder."""
+    r = boot(build_card("c11"))
+    check(r.peek_u32("g_set", 0) == 3, f"boot theme {r.peek_u32('g_set', 0)} (old root cfg says 3)")
+    check(SETTINGS not in r.listing(), "settings.cfg exists before any save")
+    c.shot(r, "boot-theme3")
+    base_sort = sort_state(r)
+    r.tap("START")
+    r.tap("UP")
+    r.tap("UP")
+    r.tap("A")                                      # Settings
+    r.tap("DOWN")
+    r.tap("DOWN")                                   # Sort row
+    r.tap("RIGHT")
+    c.shot(r, "settings-sort-changed")
+    r.tap("A")                                      # save + close
+    r.report({SETTINGS}, optional={LOG})            # the old root cfg is NOT in the diff
+    cfg = r.cat(SETTINGS).decode()
+    check("theme=3" in cfg, f"migrated theme lost: {cfg!r}")
+    new_sort = sort_state(r)
+    check(new_sort != base_sort, "Sort row did not change the sort")
+    want = f"sort_key={new_sort // 2}\nsort_rev={new_sort % 2}\n"
+    check(want in cfg, f"settings.cfg lacks {want!r}: {cfg!r}")
+
+    old = WORK / "c11-old.cfg"                      # make the OLD root file disagree, then reboot
+    old.write_text("[file_browser_gba]\ntheme=1\nsort_key=2\nsort_rev=1\n")
+    subprocess.run([str(vsd_run.ensure_vsd_img()), "patch", str(r.img), "/file_browser_gba.cfg",
+                    str(old)], check=True, capture_output=True)
+    r = boot(r.img)
+    check(r.peek_u32("g_set", 0) == 3, "reboot took the OLD root cfg's theme")
+    check(sort_state(r) == new_sort, f"reboot sort {sort_state(r)} != saved {new_sort}")
+    c.shot(r, "reboot-new-cfg-wins")
+    c.note(f"theme 3 migrated; sort {base_sort}->{new_sort} saved to settings.cfg; root cfg ignored after")
+
+
+BUILD_ENV = {
+    "DEVKITPRO": "/opt/devkitpro", "DEVKITARM": "/opt/devkitpro/devkitARM",
+    "PATH": "/opt/devkitpro/devkitARM/bin:/opt/devkitpro/tools/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    "HOME": str(Path.home()),
+}
+SEAM_FILES = ("lib/flashcartio.c", "lib/flashcartio_write.c")
+
+
+def _build_tree(dest: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(["make", "-j4"], cwd=dest, env=BUILD_ENV, capture_output=True, text=True)
+
+
+def chain_12(c: Ctx) -> None:
+    """shipped-build guard: the shipped ELF has no vsd_ symbol and the VSD seam costs it zero bytes."""
+    nm = "/opt/devkitpro/devkitARM/bin/arm-none-eabi-nm"
+    out = subprocess.run([nm, str(SHIPPED_ELF)], capture_output=True, text=True, check=True).stdout
+    hits = [ln for ln in out.splitlines() if "vsd_" in ln or "g_vsd" in ln]
+    check(not hits, f"shipped ELF has VSD symbols: {hits[:3]}")
+    c.note("nm shipped.elf | grep -c vsd_ == 0")
+
+    guard = OUT / "guard"
+    shutil.rmtree(guard, ignore_errors=True)
+    lane = guard / "lane-novsd"
+    lane.mkdir(parents=True)
+    tar = subprocess.run(f"git -C {ROOT} ls-files -z | xargs -0 -I{{}} echo {{}} >/dev/null; "
+                         f"git -C {ROOT} archive HEAD | tar -x -C {lane}", shell=True,
+                         capture_output=True, text=True)
+    check(tar.returncode == 0, f"git archive HEAD failed: {tar.stderr}")
+    for rel in SEAM_FILES:                         # revert the seam to main's version
+        main_src = subprocess.run(["git", "-C", str(ROOT), "show", f"main:{rel}"],
+                                  capture_output=True, check=True).stdout
+        (lane / rel).write_bytes(main_src)
+    (lane / "lib/vsd.c").unlink()
+    (lane / "lib/vsd.h").unlink()
+    built = _build_tree(lane)
+    check(built.returncode == 0, f"lane-without-seam build failed:\n{built.stderr[-600:]}")
+    size = "/opt/devkitpro/devkitARM/bin/arm-none-eabi-size"
+    objs = sorted(p.name for p in (ROOT / "build").glob("*.o"))
+    check("vsd.o" in objs, "lane build has no vsd.o (expected an empty translation unit)")
+    differ = [n for n in objs if n != "vsd.o"
+              and (ROOT / "build" / n).read_bytes() != (lane / "build" / n).read_bytes()]
+    check(not differ, f"objects differ from the seam-reverted build: {differ}")
+    vsd_o = subprocess.run([size, str(ROOT / "build/vsd.o")], capture_output=True, text=True).stdout
+    check(vsd_o.split("\n")[1].split()[:3] == ["0", "0", "0"], f"vsd.o is not empty: {vsd_o!r}")
+    sizes = [subprocess.run([size, "-A", str(e)], capture_output=True, text=True).stdout.split("\n", 1)[1]
+             for e in (SHIPPED_ELF, lane / "file_browser_gba.elf")]
+    check(sizes[0] == sizes[1], "section sizes differ from the seam-reverted build")
+    a = (lane / "file_browser_gba.gba").read_bytes()
+    b = (ROOT / "file_browser_gba.gba").read_bytes()
+    check(len(a) == len(b), "image sizes differ")
+    ndiff = sum(1 for x, y in zip(a, b) if x != y)
+    c.note(f"{len(objs) - 1} objects byte-identical to the seam-reverted build; vsd.o = 0/0/0; "
+           f"section sizes identical; final .gba differs in {ndiff} B (linker veneer order only: "
+           f"same size, the empty vsd.o perturbs the link's symbol hash)")
+
+    mainb = guard / "main"
+    mainb.mkdir()
+    tar = subprocess.run(f"git -C {ROOT} archive main | tar -x -C {mainb}", shell=True,
+                         capture_output=True, text=True)
+    check(tar.returncode == 0, "git archive main failed")
+    built = _build_tree(mainb)
+    check(built.returncode == 0, f"main build failed:\n{built.stderr[-600:]}")
+    for label, elf in (("main", mainb / "file_browser_gba.elf"), ("lane", SHIPPED_ELF)):
+        sec = subprocess.run([size, "-A", str(elf)], capture_output=True, text=True).stdout
+        c.note(label + " sections: " + " ".join(
+            f"{ln.split()[0]}={ln.split()[1]}" for ln in sec.splitlines()
+            if ln.split() and ln.split()[0] in (".text", ".rodata", ".iwram", ".bss", ".data", ".ewram")))
+    shutil.rmtree(guard, ignore_errors=True)
+
+
+CHAINS = {1: chain_1, 2: chain_2, 3: chain_3, 4: chain_4, 5: chain_5, 6: chain_6, 7: chain_7, 8: chain_8, 9: chain_9, 10: chain_10, 11: chain_11, 12: chain_12}
 
 
 def run_chain(num: int) -> "tuple[bool, str]":

@@ -196,6 +196,10 @@ class Runner:
         """The little-endian u32 at symbol `name` + `offset` (4-aligned)."""
         return self.core.memory.u32.raw_read(self.symbol(name) + offset) & 0xFFFFFFFF
 
+    def peek_u8(self, name: str, offset: int = 0) -> int:
+        """The byte at symbol `name` + `offset` (any alignment)."""
+        return self.core.memory.u8.raw_read(self.symbol(name) + offset) & 0xFF
+
     def peek_cstr(self, name: str, maxlen: int = 256) -> str:
         """The NUL-terminated string stored at symbol `name` (at most `maxlen` bytes)."""
         base, out = self.symbol(name), bytearray()
