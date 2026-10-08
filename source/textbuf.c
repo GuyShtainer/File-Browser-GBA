@@ -2,6 +2,14 @@
 #include "textbuf.h"
 #include <string.h>
 
+/* The 4 KiB undo pool must not eat the 32 KiB IWRAM: on the GBA build it goes to
+ * EWRAM (.sbss, same trick as fs_ops.c); host builds keep an ordinary static. */
+#if defined(__arm__)
+#define TB_EWRAM __attribute__((section(".sbss")))
+#else
+#define TB_EWRAM
+#endif
+
 #define UNDO_POOL  4096u
 #define UNDO_HDR   7u
 #define UNDO_MERGE 32u          /* longest typed/deleted run merged into one record */
@@ -14,7 +22,7 @@ static uint32_t s_len;
 static bool     s_dirty;
 static bool     s_crlf;
 
-static uint8_t  s_undo[UNDO_POOL];
+static uint8_t  TB_EWRAM s_undo[UNDO_POOL];
 static uint32_t s_ulen;         /* bytes used in the pool            */
 static uint32_t s_ulast;        /* offset of the newest record       */
 static int      s_ucount;
