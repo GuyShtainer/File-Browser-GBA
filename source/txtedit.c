@@ -105,6 +105,7 @@ static void tx_save_error(FRESULT fr, const char* path, const char* name) {
   char l[40], t[64];
   if (fr == FSOP_ERR_LEFTOVER) log_line("txtedit: refused leftover temp %s", path);
   else if (fr == FSOP_ERR_SHARED) log_line("txtedit: refused shared chain %s", path);
+  else if (fr == FSOP_ERR_UNVERIFIED) log_line("txtedit: save failed (unverified) %s", path);
   else log_line("txtedit: save failed fr=%d %s", (int)fr, path);
   (void)log_flush_to_sd(LOG_PATH);   /* the outcome line reaches the card now (chain oracle) */
   if (fr == FSOP_ERR_LEFTOVER) {
@@ -113,6 +114,8 @@ static void tx_save_error(FRESULT fr, const char* path, const char* name) {
     tx_msg("Leftover temp file", l, "check it first");
   } else if (fr == FSOP_ERR_SHARED) {
     tx_msg("Save refused", "backup shares data with file", "original untouched");
+  } else if (fr == FSOP_ERR_UNVERIFIED) {
+    tx_msg("Save NOT verified", "card does not hold the", "new text - see .txtnew~");
   } else {
     FILINFO c;
     char tp[FS_PATH_CAP];

@@ -681,6 +681,13 @@ static void save_leftover_msg(const char* path) {
   msg_screen(l1, UI_WARN, "left over - check it first");
 }
 
+/* A save was written but the post-swap re-read of the final file did not match the card. */
+static void save_unverified_msg(const char* path) {
+  char l1[PATH_MAX + 16];
+  siprintf(l1, "%s.txtnew~", base_name(path));
+  msg_screen(l1, UI_WARN, "save NOT verified - check it");
+}
+
 /* Persist a path list (verified save, no .bak~). false = not written. */
 static bool save_pathlist(const char* path, const PathList* l) {
   if (!can_write()) return false;
@@ -692,6 +699,7 @@ static bool save_pathlist(const char* path, const PathList* l) {
   else log_line("%s: saved %d", strcmp(path, PINS_PATH) == 0 ? "pins" : "shortcuts", pl_count(l));
   (void)log_flush_to_sd(LOG_PATH);   /* the outcome line reaches the card now (chain oracle) */
   if (fr == FSOP_ERR_LEFTOVER) save_leftover_msg(path);
+  else if (fr == FSOP_ERR_UNVERIFIED) { log_line("pathlist save unverified %s", path); save_unverified_msg(path); }
   return fr == FR_OK;
 }
 
@@ -833,6 +841,7 @@ static bool save_buttons(void) {
   else log_line("buttons: saved");
   (void)log_flush_to_sd(LOG_PATH);   /* the outcome line reaches the card now (chain oracle) */
   if (fr == FSOP_ERR_LEFTOVER) save_leftover_msg(BUTTONS_PATH);
+  else if (fr == FSOP_ERR_UNVERIFIED) { log_line("pathlist save unverified %s", BUTTONS_PATH); save_unverified_msg(BUTTONS_PATH); }
   return fr == FR_OK;
 }
 
@@ -3136,6 +3145,7 @@ int main(void) {
   static FATFS fs;
   FRESULT fr = f_mount(&fs, "", 1);
   if (fr != FR_OK) { log_line("f_mount failed (fr=%d)", fr); halt_msg("SD mount failed!"); }
+  fsop_set_fs(&fs);
   log_line("SD mounted OK");
 
   pl_init(&g_pins, g_pin_pool, sizeof(g_pin_pool), 0);
