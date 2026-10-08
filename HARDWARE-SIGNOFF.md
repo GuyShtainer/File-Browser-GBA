@@ -604,6 +604,7 @@ eyeballed on the real cart. All new files live in `/file_browser_gba/`.
       empty `pins.txt.txtnew~` next to it (what a power cut between a save's two
       renames leaves); boot: pins still appear and log.txt has
       "loaded ... from .bak~ (file missing, temp present)". Then *Pin to top* on any
-      entry is refused with "pins.txt.txtnew~ / left over - check it first"; delete
+      entry is refused with "pins.txt.txtnew~ / left over - check it first", then "Pin changed / but
+      not saved to SD" (the pin stays for this session); delete
       the temp on the PC and pinning works again. Control: with ONLY `pins.txt.bak~`
       (no temp) the boot shows no pins. PASS / FAIL / NOTES: ____
