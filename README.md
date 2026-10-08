@@ -7,11 +7,38 @@ flashcart's microSD card. No PC, no DS — just the handheld.
 
 ## Screenshots
 
-<!-- To add: drop an image in docs/ (e.g. docs/screenshot.png) — a photo of the
-     tool on a real GBA/SP reads best, since the flashcart SD isn't emulated — and
-     replace the line below with:  ![File-Browser-GBA](docs/screenshot.png) -->
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/root-pins.png" width="360" alt="root-pins"><br><sub>Root of the card: pinned rows (<code>#</code>) stay on top, then the folders.</sub></td>
+    <td align="center"><img src="docs/screenshots/saver.png" width="360" alt="saver"><br><sub>A folder listing: names and sizes, the selected row's date below.</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/grid.png" width="360" alt="grid"><br><sub>Grid view inside <code>/tools</code>.</sub></td>
+    <td align="center"><img src="docs/screenshots/columns.png" width="360" alt="columns"><br><sub>Column view: the highlighted folder's contents in the right pane.</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/start-menu.png" width="360" alt="start-menu"><br><sub>START menu: the two shortcut rows (<code>&gt;</code>) sit above the actions.</sub></td>
+    <td align="center"><img src="docs/screenshots/pin-menu.png" width="360" alt="pin-menu"><br><sub>The same menu on a folder: <em>Pin to top</em>.</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/txtedit.png" width="360" alt="txtedit"><br><sub>Built-in text editor with the on-screen keyboard up.</sub></td>
+    <td align="center"><img src="docs/screenshots/txtedit-save.png" width="360" alt="txtedit-save"><br><sub>After typing: the <code>*</code> in the status line marks the buffer as modified.</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/hex.png" width="360" alt="hex"><br><sub>Hex viewer on a 128 KiB save file (the demo bodies are all zeros).</sub></td>
+    <td align="center"><img src="docs/screenshots/buttons.png" width="360" alt="buttons"><br><sub>Settings, Button shortcuts: SELECT+key slots with two bindings.</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/settings.png" width="360" alt="settings"><br><sub>Settings screen.</sub></td>
+    <td align="center"><img src="docs/screenshots/trash.png" width="360" alt="trash"><br><sub>Trash view after moving one <code>.cht</code> cheat file to the recycle bin.</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/many.png" width="360" alt="many"><br><sub>A 124-file folder, mid-scroll after a few L/R jumps.</sub></td>
+    <td></td>
+  </tr>
+</table>
 
-*Running on a Game Boy Advance SP + EZ-Flash Omega DE. (Photos coming soon.)*
+Screenshots come from the virtual-SD harness under mGBA (`make vsd`, `tools/vsd_shots.py`); the card layout mirrors a real EZ-Flash Omega DE card (file names only, zero-filled bodies). v1.1 features are NOT hardware-tested yet — see HARDWARE-SIGNOFF.md.
 
 ## Status
 
@@ -314,6 +341,29 @@ This repository is **self-contained**: the shared hardware/filesystem layer
 (flashcartio, FatFs, the EZ-Flash Omega + EverDrive block drivers, the cartridge
 RTC and the logger) is vendored into `lib/` and `source/`, so `build.sh` only
 mounts this folder and `make` finds everything locally — no external checkout.
+
+## Development: the virtual SD card
+
+`make vsd` builds a private `file_browser_gba-vsd.gba` in which the flashcart SD driver is
+replaced by a mailbox that a host script serves from a FAT16 image while the ROM runs in
+mGBA (the seam and the protocol are documented in the gba-toolkit's
+`docs/kb/virtual-sd-harness.md`). The shipped ROM (`make`) contains none of it: the seam is
+compiled out, so the `vsd_*` symbols are absent and every other object file is byte-identical
+(`tools/vsd_chains.py` chain 12 checks that).
+
+```sh
+make vsd                                  # needs the devkitARM environment, like make
+sh tests/run_host.sh                      # host tests; also builds /tmp/vsd_img (tools/build_vsd_host.sh)
+python3 tools/vsd_chains.py --all         # 12 fault-injection chains on fresh 32 MiB cards
+python3 tools/vsd_chains.py --only 7      # one chain (7 = the fail_at / lie_after sweeps)
+python3 tools/vsd_shots.py                # rebuilds docs/screenshots/*.png from the demo card
+```
+
+The chains drive the real UI by key taps and judge the card itself: which paths changed, the
+exact bytes of the edited file, and the lines the app logged. They run under mGBA with the
+Python bindings from `projects/rec2mp4/vendor` of the gba-toolkit (or set `VSD_MGBA_VENDOR`).
+The harness cannot prove the EZ-Flash OS-mode timing, the real card's behaviour or anything
+that needs the physical cartridge; those stay in HARDWARE-SIGNOFF.md.
 
 ## Layout
 
