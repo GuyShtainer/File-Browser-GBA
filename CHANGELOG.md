@@ -5,6 +5,34 @@ All notable changes to **File-Browser-GBA**. Format loosely follows
 GitHub releases.
 
 ## [Unreleased]
+### Added (v1.1.0 candidate - UI/SD behaviour is hardware-unverified)
+- **On-screen text editor** (actions menu -> *Edit text*, Omega-only, files up to 32 KiB).
+  Navigate mode (D-pad caret, L/R page, A keyboard, SELECT undo, START menu, B exit)
+  and Type mode (3-page on-screen keyboard + Space/Enter/Tab). Keeps the file's own
+  CRLF/LF line endings, shows `Ln/Col/*/undo/CRLF`, warns before opening binary
+  bytes (kept as-is on save). Saves through a verified write (`<file>.txtnew~` ->
+  byte-compare -> original kept as `<file>.bak~`); refuses with a clear message if a
+  leftover `.txtnew~` exists or the `.bak~` shares data with the file.
+- **Pin to top** - pin any file/folder; pinned paths are the first rows of every
+  folder in List, Grid and Column views (A jumps there, START = Open/Unpin; a
+  missing target offers to unpin). Stored in `/file_browser_gba/pins.txt`.
+- **START-menu shortcuts** - *Add shortcut* / *Remove shortcut*; saved shortcuts are
+  the first rows of the START menu in every folder (A jumps, SELECT removes; up to
+  16). Stored in `/file_browser_gba/shortcuts.txt`.
+- **Button combos** - SELECT + UP/DOWN/LEFT/RIGHT/A/B/L/R each run a bound folder,
+  file or action (Settings, Find, Trash, Paste here, New folder/file, Select
+  multiple, show/hide hidden, cycle view, go to root, reboot to loader). Bind via
+  *Bind to button...* in the actions menu or Settings -> *Button shortcuts...*;
+  stored in `/file_browser_gba/buttons.txt`.
+### Changed
+- **One folder on the card**: the settings and log now live in `/file_browser_gba/`
+  (`settings.cfg`, `log.txt`). The old root `/file_browser_gba.cfg` is still read if
+  the new file is absent (and left alone).
+- **SELECT cycles the sort order on release** (not on press), and only when no other
+  key was pressed while it was held, so it can act as the combo modifier. Inside
+  multi-select mode SELECT is unchanged.
+- The Find results and the editor buffer now share one EWRAM overlay (no extra RAM
+  for the 32 KiB buffer).
 ### Fixed
 - **Intermittent hang at "Detecting flashcart..."** on the EZ-Flash Omega DE: the
   cart-detection code used to identify the currently-running page by a single ROM
