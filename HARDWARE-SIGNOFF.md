@@ -557,8 +557,8 @@ hardware-only. All new files live in `/file_browser_gba/`.
       *Edit text* item. PASS / FAIL / NOTES: ______________________________
 - Evidence: EMU+VSD chain 2 (LF edit, save, `.bak~` byte-equal, no temp left) and chain 7 (every
   write sector failed in turn with `fail_at`: notes.txt is always the original, the new content or the
-  designed RECOVER state; the `lie_after` sweep is RED - a save lost after the verify while the screen
-  says Saved - see the lane report). Chain 5: a 40,000 B file has no *Edit text* row. Not covered by a
+  designed RECOVER state; the `lie_after` sweep is green since the post-swap re-verify (B63): every k where
+  notes.txt is not the new text shows the failure screen). Chain 5: a 40,000 B file has no *Edit text* row. Not covered by a
   chain: the three keyboard pages, caret moves, SELECT undo, the read-only refusal.
 
 ## (V11-2) CRLF file round-trip  -> B53

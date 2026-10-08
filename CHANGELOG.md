@@ -25,7 +25,7 @@ GitHub releases.
   *Bind to button...* in the actions menu or Settings -> *Button shortcuts...*;
   stored in `/file_browser_gba/buttons.txt`.
 - **Virtual-SD test harness** (development only, not in the shipped ROM): `make vsd`,
-  `tools/vsd_chains.py` (12 fault-injection chains: edit/save, write-sector sweeps, pins, shortcuts,
+  `tools/vsd_chains.py` (12 scripted chains (chain 7 injects write faults): edit/save, write-sector sweeps, pins, shortcuts,
   button combos, cfg migration, shipped-build guard) and `tools/vsd_shots.py` (the README screenshots).
   The text editor, pin, shortcut and button saves now also log their outcome to `log.txt`.
 ### Changed
@@ -57,7 +57,12 @@ GitHub releases.
 
 ### Known issues (v1.1 candidate)
 - The hex editor save path (`fsop_apply_edits`) still lacks the leftover-temp and
-  shared-chain guards that the text editor / pin / shortcut saves have (follow-up).
+  shared-chain guards that the text editor / pin / shortcut saves have, nor the post-swap
+  re-verify (follow-up).
+- After a "Save NOT verified" message, inspect `<file>.txtnew~` on a PC before deleting it in the
+  tool: on a card that dropped part of a rename the temp can share its data clusters with the
+  saved file, and the browser's delete/trash has no cross-link check, so removing it there could
+  free the file's data (the hex editor's `.hexnew~` has the same exposure).
 - Saving over a read-only `pins.txt` drops its read-only flag.
 - SELECT on a START-menu shortcut row removes it without a confirm (by design; the footer says so).
 - `cfg_load` falls back to the old root config on a transient open error of `settings.cfg`.

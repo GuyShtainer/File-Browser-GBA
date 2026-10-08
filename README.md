@@ -33,7 +33,7 @@ flashcart's microSD card. No PC, no DS — just the handheld.
     <td align="center"><img src="docs/screenshots/trash.png" width="360" alt="trash"><br><sub>Trash view after moving one <code>.cht</code> cheat file to the recycle bin.</sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/screenshots/many.png" width="360" alt="many"><br><sub>A 124-file folder, mid-scroll after a few L/R jumps.</sub></td>
+    <td align="center"><img src="docs/screenshots/many.png" width="360" alt="many"><br><sub>A 120-file folder (124 rows with the pins and <code>[..]</code>), mid-scroll after a few R jumps.</sub></td>
     <td></td>
   </tr>
 </table>
@@ -354,7 +354,7 @@ compiled out, so the `vsd_*` symbols are absent and every other object file is b
 ```sh
 make vsd                                  # needs the devkitARM environment, like make
 sh tests/run_host.sh                      # host tests; also builds /tmp/vsd_img (tools/build_vsd_host.sh)
-python3 tools/vsd_chains.py --all         # 12 fault-injection chains on fresh 32 MiB cards
+python3 tools/vsd_chains.py --all         # 12 scripted chains (chain 7 injects write faults) on fresh 32 MiB cards
 python3 tools/vsd_chains.py --only 7      # one chain (7 = the fail_at / lie_after sweeps)
 python3 tools/vsd_shots.py                # rebuilds docs/screenshots/*.png from the demo card
 ```

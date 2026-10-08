@@ -841,7 +841,7 @@ static bool save_buttons(void) {
   else log_line("buttons: saved");
   (void)log_flush_to_sd(LOG_PATH);   /* the outcome line reaches the card now (chain oracle) */
   if (fr == FSOP_ERR_LEFTOVER) save_leftover_msg(BUTTONS_PATH);
-  else if (fr == FSOP_ERR_UNVERIFIED) { log_line("pathlist save unverified %s", BUTTONS_PATH); save_unverified_msg(BUTTONS_PATH); }
+  else if (fr == FSOP_ERR_UNVERIFIED) { log_line("buttons save unverified %s", BUTTONS_PATH); save_unverified_msg(BUTTONS_PATH); }
   return fr == FR_OK;
 }
 
