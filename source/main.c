@@ -1894,6 +1894,8 @@ static int run_action(int id, const FsEntry* e) {
       char np[PATH_MAX];
       if (e->attrib & AM_RDO) { msg_screen("File is read-only", UI_WARN, NULL); return RA_STAY; }
       if (!path_join(g_cwd, e->name, np)) { msg_screen("Path too long", UI_WARN, NULL); return RA_STAY; }
+      /* fsop_save_buffer refuses long paths; a >247-char leaf makes name.txtnew~ exceed the 255 LFN limit */
+      if (strlen(np) + 10 >= FS_PATH_CAP || strlen(e->name) + 8 > 255) { msg_screen("Name too long to save", UI_WARN, NULL); return RA_STAY; }
       return txtedit_run(np, e->name, g_scratch.text, sizeof(g_scratch.text)) ? RA_TRUE : RA_STAY;
     }
     case A_PIN: {      /* pin/unpin this path; the cursor re-selects it by name */
