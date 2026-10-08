@@ -2072,6 +2072,7 @@ static bool actions_menu(const FsEntry* e) {
       int r = goto_path(path, nm);
       if (r > 0) return true;                      /* navigated: rescan */
       if (r == 0) msg_screen("Reserved folder", UI_DIM, "Use the Trash action");
+      else if (r == -2) msg_screen("Read error", UI_WARN, "try again");
       else if (can_write() && confirm("Not found.", "Remove shortcut?")) {
         (void)pl_remove_at(&g_shortcuts, si);
         (void)save_pathlist(SHORTCUTS_PATH, &g_shortcuts);
@@ -2608,14 +2609,16 @@ static void apply_find_sel(int* sel, int* top) {
 /* Jump to an absolute path: a folder becomes the cwd; a file makes its parent
  * the cwd and queues its name in g_find_sel so apply_find_sel() lands on it.
  * Returns 1 = folder, 2 = file (name copied to name_out), 0 = refused (Trash),
- * -1 = not found. The caller rescans and handles the missing-target prompt. */
+ * -1 = not found, -2 = read error (do NOT offer to remove the pin/shortcut). The caller rescans and handles the missing-target prompt. */
 static int goto_path(const char* path, char* name_out) {
   FILINFO fno;
   bool isdir;
   if (path[0] != '/') return -1;
   if (!strcmp(path, "/")) isdir = true;
   else {
-    if (f_stat(path, &fno) != FR_OK) return -1;
+    FRESULT fr = f_stat(path, &fno);
+    if (fr == FR_NO_FILE || fr == FR_NO_PATH || fr == FR_INVALID_NAME) return -1;
+    if (fr != FR_OK) return -2;
     isdir = (fno.fattrib & AM_DIR) != 0;
   }
   if (under_trash(path)) return 0;
@@ -2639,6 +2642,7 @@ static void open_pin(int pi, int* sel, int* top) {
   char path[PATH_MAX], name[FS_NAME_CAP];
   strcpy(path, pl_get(&g_pins, pi));
   int r = goto_path(path, name);
+  if (r == -2) { msg_screen("Read error", UI_WARN, "try again"); return; }
   if (r < 0) {
     if (can_write() && confirm("Not found.", "Unpin it?")) pin_unpin(pi);
     else if (!can_write()) msg_screen("Not found", UI_WARN, path);
@@ -2703,7 +2707,7 @@ static bool combo_run(int i) {
   if (!strncmp(v, "path:", 5)) {
     int r = goto_path(v + 5, nm);
     if (r > 0) return true;
-    msg_screen(r == 0 ? "Reserved folder" : "Not found", UI_WARN, v + 5);
+    msg_screen(r == 0 ? "Reserved folder" : r == -2 ? "Read error" : "Not found", UI_WARN, v + 5);
     return false;
   }
   if (!strncmp(v, "act:", 4)) return run_combo_action(v + 4);
