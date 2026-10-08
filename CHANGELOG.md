@@ -24,6 +24,10 @@ GitHub releases.
   multiple, show/hide hidden, cycle view, go to root, reboot to loader). Bind via
   *Bind to button...* in the actions menu or Settings -> *Button shortcuts...*;
   stored in `/file_browser_gba/buttons.txt`.
+- **Virtual-SD test harness** (development only, not in the shipped ROM): `make vsd`,
+  `tools/vsd_chains.py` (12 fault-injection chains: edit/save, write-sector sweeps, pins, shortcuts,
+  button combos, cfg migration, shipped-build guard) and `tools/vsd_shots.py` (the README screenshots).
+  The text editor, pin, shortcut and button saves now also log their outcome to `log.txt`.
 ### Changed
 - **One folder on the card**: the settings and log now live in `/file_browser_gba/`
   (`settings.cfg`, `log.txt`). The old root `/file_browser_gba.cfg` is still read if

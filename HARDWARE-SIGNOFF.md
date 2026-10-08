@@ -541,8 +541,11 @@ RTC is unreadable, it deletes nothing.
 
 # v1.1 candidate addendum - text editor, pins, shortcuts, button combos  -> B52-B62  (write, Omega-only)
 
-None of this is emulated: the SD write/rename path and the on-screen UI must be
-eyeballed on the real cart. All new files live in `/file_browser_gba/`.
+The SD write/rename path now runs under the virtual-SD harness (`make vsd`,
+`tools/vsd_chains.py`, see the README's development section), which is the evidence cited per
+row below as "EMU+VSD chain N". It does NOT replace these rows: the real cart's OS-mode
+timing, the real card's behaviour and what the screen looks like on the handheld are still
+hardware-only. All new files live in `/file_browser_gba/`.
 
 ## (V11-1) Edit + save + .bak~ on a real file  -> B52
 - [ ] Edit text on a small `.txt`: type with the keyboard (all 3 pages, Space, Enter,
@@ -552,52 +555,79 @@ eyeballed on the real cart. All new files live in `/file_browser_gba/`.
 - [ ] Exit with unsaved changes asks Save and exit / Exit without saving / Cancel.
 - [ ] Read-only file -> `File is read-only`, editor does not open. File > 32 KiB: no
       *Edit text* item. PASS / FAIL / NOTES: ______________________________
+- Evidence: EMU+VSD chain 2 (LF edit, save, `.bak~` byte-equal, no temp left) and chain 7 (every
+  write sector failed in turn with `fail_at`: notes.txt is always the original, the new content or the
+  designed RECOVER state; the `lie_after` sweep is RED - a save lost after the verify while the screen
+  says Saved - see the lane report). Chain 5: a 40,000 B file has no *Edit text* row. Not covered by a
+  chain: the three keyboard pages, caret moves, SELECT undo, the read-only refusal.
 
 ## (V11-2) CRLF file round-trip  -> B53
 - [ ] Open a CRLF text file: status shows `CRLF`; Enter inserts a CRLF pair;
       backspace over a line break removes both bytes; save and verify on a PC that
       every untouched line still ends in CRLF. PASS / FAIL / NOTES: ____________
+- Evidence: EMU+VSD chain 3 (Enter at offset 0 of a CRLF file gives exactly `\r\n` + the original
+  bytes). Backspace over a line break is not covered.
 
 ## (V11-3) Binary-warning path  -> B54
 - [ ] Open a file with non-text bytes: prompt `Binary bytes shown as '.', kept as-is`.
       Edit one ASCII character elsewhere, save; a PC diff shows ONLY that change.
       PASS / FAIL / NOTES: ______________________________
+- Evidence: EMU+VSD chain 4 (`mixed.bin`: warning confirmed, one char inserted, all 200 original
+  bytes intact after it; `.bak~` is the original).
 
 ## (V11-4) Leftover .txtnew~ refusal  -> B55
 - [ ] Put a file `X.txtnew~` next to `X` on a PC, then edit and save `X`: the save is
       refused with `Leftover temp file` and `X.txtnew~` is untouched. PASS / FAIL: ______
+- Evidence: EMU+VSD chain 6 (a stray `notes.txt.txtnew~` makes the save refuse; only the log changed,
+  the stray file is untouched).
 
 ## (V11-5) Pins persist and show in all views  -> B56
 - [ ] Pin a file and a folder; they are the first rows in List, Grid and Columns in
       several folders. Power-cycle: pins still there (`pins.txt` on the card).
 - [ ] A on a pinned folder enters it; A on a pinned file lands on it and opens its
       actions menu. START on a pin = Open / Unpin. PASS / FAIL / NOTES: ________
+- Evidence: EMU+VSD chain 8 (pin, `pins.txt` exact, reboot keeps it, A on the pin enters the folder, the
+  pin menu's Unpin empties `pins.txt`). Grid and Columns pin rows are only seen in the README screenshots
+  (columns.png); A on a pinned *file* and the all-views claim are not chain-checked.
 
 ## (V11-6) Pin to a deleted folder  -> B57
 - [ ] Pin a folder, delete it on a PC, A on the pin -> `Not found. Unpin it?`; A
       removes the pin. PASS / FAIL / NOTES: ______________________________
+- Evidence: EMU+VSD chain 8 (a pinned folder trashed by the app -> `Not found. Unpin it?` -> A unpins,
+  `pins.txt` empty). The folder is removed through the app's own Trash, not on a PC.
 
 ## (V11-7) START-menu shortcuts  -> B58
 - [ ] Add shortcut on a folder and a file; they are the first START-menu rows in any
       folder, A jumps there (file: cursor lands on it), SELECT removes, Remove
       shortcut also works. The 17th add says `Shortcut list full (16)`.
       PASS / FAIL / NOTES: ______________________________
+- Evidence: EMU+VSD chain 9 (shortcut on a folder: `shortcuts.txt` exact, START-menu first row opens it,
+  SELECT removes it). A shortcut to a file is exercised by `tools/vsd_shots.py` (lands on `/tools`); the
+  17th-add limit is not covered.
 
 ## (V11-8) Button combos  -> B59
 - [ ] Bind a folder via *Bind to button...* and an action via Settings -> *Button
       shortcuts...*; SELECT+key runs each; `buttons.txt` survives a power cycle.
       Check at least: a path, Find, Paste here, Show/hide hidden, Cycle view (all
       three views), Go to root. PASS / FAIL / NOTES: ______________________________
+- Evidence: EMU+VSD chain 10 (SELECT+A bound to `/docs` via *Bind to button...*, SELECT+UP bound to
+  *Go to root* via Settings, `buttons.txt` exact, both chords work after a reboot). Find, Paste here,
+  Show/hide hidden and Cycle view are not chain-checked.
 
 ## (V11-9) SELECT alone still cycles sort  -> B60
 - [ ] Tap SELECT (no other key): sort order cycles on release. Holding SELECT and
       pressing a bound key does NOT cycle it. In multi-select mode SELECT still
       marks all/none immediately. PASS / FAIL / NOTES: ____________________
+- Evidence: EMU+VSD chain 10 (a plain SELECT tap changes the sort; a chord does not). Multi-select mode
+  is not covered.
 
 ## (V11-10) Config migrated into /file_browser_gba/  -> B61
 - [ ] On a card with an old root `/file_browser_gba.cfg`: first launch shows the old
       settings; after changing one, `/file_browser_gba/settings.cfg` and `log.txt`
       exist and the old root file is untouched. PASS / FAIL / NOTES: ____________
+- Evidence: EMU+VSD chain 11 (old root cfg read at boot with theme 3; after a settings save
+  `/file_browser_gba/settings.cfg` exists and the old root file is untouched; after a reboot the new file
+  wins even when the old root file is changed on the card).
 
 ## (V11-11) Pins/shortcuts/buttons load from `.bak~` when the file is missing  -> B62
 - [ ] On the PC rename `/file_browser_gba/pins.txt` to `pins.txt.bak~` AND create an
@@ -608,3 +638,4 @@ eyeballed on the real cart. All new files live in `/file_browser_gba/`.
       not saved to SD" (the pin stays for this session); delete
       the temp on the PC and pinning works again. Control: with ONLY `pins.txt.bak~`
       (no temp) the boot shows no pins. PASS / FAIL / NOTES: ____
+- Evidence: none yet (no chain stages the `.bak~`-only boot); hardware-only until a chain does.
