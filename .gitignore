@@ -1,5 +1,6 @@
 # --- build artifacts ---
 build/
+build-vsd/
 *.elf
 *.gba
 *.map
@@ -29,3 +30,15 @@ HANDOFF.md
 
 # --- macOS ---
 .DS_Store
+
+# --- virtual-SD harness (tools/vsd_chains.py, vsd_shots.py): images are rebuilt, never committed ---
+*.img
+*.img.pre
+# template/overlay fixtures that the patterns above would otherwise swallow (text/synthetic bytes only)
+!tools/vsd_template/mixed.bin
+!tools/vsd_template/file_browser_gba.cfg
+!tools/vsd_demo/overlay/**
+
+# vsd harness outputs
+chains/
+__pycache__/

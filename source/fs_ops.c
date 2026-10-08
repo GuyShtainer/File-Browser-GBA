@@ -582,6 +582,9 @@ static FRESULT save_verify_tmp(const char* tmp, const uint8_t* data, uint32_t le
   return fr;
 }
 
+static FATFS* s_fs;
+void fsop_set_fs(FATFS* fs) { s_fs = fs; }
+
 static FRESULT save_swap(const char* path, const char* tmp, const char* bak, bool existed) {
   FRESULT fr;
   FILINFO fno;
@@ -602,6 +605,18 @@ static FRESULT save_swap(const char* path, const char* tmp, const char* bak, boo
   return FR_OK;
 }
 
+/* After the swap, re-verify the FINAL path from the card, not from FatFs's cached directory window: a card that
+ * acknowledges a metadata write it did not keep (EZ-Flash writes have no retry) would otherwise leave FatFs and
+ * the UI believing the rename happened. Re-registering the volume (opt 0 = delayed mount) invalidates the window
+ * and the next access re-reads the boot sector; no FIL/DIR is open across a save (checked 2026-10-09). */
+static FRESULT save_recheck(const char* path, const char* tmp, const uint8_t* data, uint32_t len) {
+  FILINFO fno;
+  if (s_fs != NULL && f_mount(s_fs, "", 0) != FR_OK) return FSOP_ERR_UNVERIFIED;
+  if (save_verify_tmp(path, data, len) != FR_OK) return FSOP_ERR_UNVERIFIED;   /* byte compare, not size */
+  if (f_stat(tmp, &fno) != FR_NO_FILE) return FSOP_ERR_UNVERIFIED;             /* temp must be gone */
+  return FR_OK;
+}
+
 FRESULT fsop_save_buffer(const char* path, const uint8_t* data, uint32_t len,
                          bool keep_backup) {
   char tmp[FS_PATH_CAP], bak[FS_PATH_CAP];
@@ -617,10 +632,12 @@ FRESULT fsop_save_buffer(const char* path, const uint8_t* data, uint32_t len,
   if (fr == FR_OK) fr = save_verify_tmp(tmp, data, len);
   if (fr != FR_OK) { f_unlink(tmp); return fr; }
   fr = save_swap(path, tmp, bak, existed);
+  if (fr == FR_OK) fr = save_recheck(path, tmp, data, len);
   if (fr == FR_OK) {
     if (existed && !keep_backup) f_unlink(bak);
     return FR_OK;
   }
+  if (fr == FSOP_ERR_UNVERIFIED) return fr;   /* leave .txtnew~ and .bak~ exactly as the card has them */
   if (!existed || fr == FSOP_ERR_SHARED || f_stat(path, &fno) == FR_OK) f_unlink(tmp);   /* original in place: drop temp */
   return fr;
 }

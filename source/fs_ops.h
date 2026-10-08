@@ -113,6 +113,11 @@ FRESULT fsop_apply_edits(const char* path, const HexEdit* edits, int n);
 /* Private fsop_save_buffer error codes (outside FatFs's FRESULT range). */
 #define FSOP_ERR_LEFTOVER ((FRESULT)100)   /* "<path>.txtnew~" already exists   */
 #define FSOP_ERR_SHARED   ((FRESULT)101)   /* "<path>.bak~" shares data with path */
+#define FSOP_ERR_UNVERIFIED ((FRESULT)102)  /* swap done but the re-read of path != data, or the temp is still there */
+
+/* The mounted volume object, used to drop FatFs's cached directory window before
+ * the post-swap re-verify in fsop_save_buffer. NULL (host tests) skips that step. */
+void fsop_set_fs(FATFS* fs);
 
 /* 1 when files `a` and `b` both exist and start at the same non-zero cluster
  * (one cluster chain with two names - what a cut inside f_rename can leave),
@@ -125,6 +130,9 @@ int fsop_same_chain(const char* a, const char* b);
  * keep_backup=false the .bak~ is removed after success. Refuses (original
  * untouched) with FSOP_ERR_LEFTOVER if the temp name already exists, and with
  * FSOP_ERR_SHARED if an existing .bak~ shares a cluster chain with `path`.
+ * After the swap, `path` is re-read from the card (FatFs cache dropped) and
+ * byte-compared; a mismatch or a surviving temp returns FSOP_ERR_UNVERIFIED and
+ * leaves .txtnew~ / .bak~ exactly as the card has them.
  * Omega-only (the caller gates on can_write). */
 FRESULT fsop_save_buffer(const char* path, const uint8_t* data, uint32_t len,
                          bool keep_backup);
