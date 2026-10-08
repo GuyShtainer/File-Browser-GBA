@@ -245,17 +245,42 @@ static void attrib_str(uint8_t a, char* o) {
 }
 
 /* ---- listing model ------------------------------------------------------ */
-/* Row 0 is a synthetic "[..]" up-entry whenever we are not at the root. */
+/* Row layout, top to bottom: the PINNED paths (every folder shows them), then a
+ * synthetic "[..]" up-entry whenever we are not at the root, then g_entries.
+ * br_entry() returns NULL for BOTH a pin row and the [..] row - callers must ask
+ * br_pin()/br_is_up() first and never treat NULL as "[..]" on its own. */
 
-static int br_rows(void) { return g_n + (at_root() ? 0 : 1); }
+static int br_npins(void) { return pl_count(&g_pins); }
+static int br_rows(void) { return br_npins() + g_n + (at_root() ? 0 : 1); }
+/* Pin index of a row, or -1 when the row is not a pin. */
+static int br_pin(int row) { return (row >= 0 && row < br_npins()) ? row : -1; }
+static bool br_is_up(int row) { return !at_root() && row == br_npins(); }
+/* Row of the first non-pin row ([..] or the first entry): where a freshly
+ * listed folder puts the cursor. */
+static int br_home(void) { return br_npins(); }
+/* Row of g_entries[i]. */
+static int br_entry_row(int i) { return br_npins() + i + (at_root() ? 0 : 1); }
 
 static FsEntry* br_entry(int row) {
+  row -= br_npins();
+  if (row < 0) return NULL;           /* a pin row */
   if (!at_root()) {
     if (row == 0) return NULL;        /* the [..] row */
     row -= 1;
   }
   if (row < 0 || row >= g_n) return NULL;
   return &g_entries[row];
+}
+
+/* Copy `in` into `out`, keeping the END of a long path ("~" + tail) because the
+ * leaf name is what identifies a pin. `out` needs max_cols*4+2 bytes. */
+static void trunc_head(char* out, const char* in, int max_cols) {
+  int n = (int)strlen(in);
+  if (n <= max_cols) { strcpy(out, in); return; }
+  const char* t = in + (n - (max_cols - 1));
+  while (((unsigned char)*t & 0xC0) == 0x80) t++;          /* never start mid-codepoint */
+  out[0] = '~';
+  strcpy(out + 1, t);
 }
 
 static void rescan(void) {
@@ -352,11 +377,16 @@ static void render_browser(int sel, int top) {
     if (row >= rows) break;
     int y = ROW0_Y + r * ROW_H;
     FsEntry* e = br_entry(row);
+    int pi = br_pin(row);
     u16 ink;
     /* in selection mode, prefix each row with the mark state of its entry */
     const char* mk = "";
     if (g_selmode && e) mk = g_marked[(int)(e - g_entries)] ? "*" : " ";
-    if (!e) {
+    if (pi >= 0) {
+      trunc_head(nbuf, pl_get(&g_pins, pi), 27);
+      siprintf(line, "# %s", nbuf);
+      ink = UI_TITLE;
+    } else if (!e) {
       siprintf(line, "[..]  up one folder");
       ink = UI_WARN;
     } else if (e->is_dir) {
@@ -371,14 +401,20 @@ static void render_browser(int sel, int top) {
       ink = UI_SAVECLR;
     }
     ui_text_sel(3, y, 234, row == sel, ink, line);
+    if (pi >= 0 && pi == br_npins() - 1) ui_hline(3, y + ROW_H - 1, 234, UI_BORDER);   /* end of the pins */
   }
 
   /* per-selection detail: a fuller name (29 cols vs the list's ~16) plus the
    * file's date/time and size — the full name lives in Properties (SELECT). */
   {
     FsEntry* se = br_entry(sel);
+    int spi = br_pin(sel);
     char dn[128], dm[128], dt[20];
-    if (!se) {
+    if (spi >= 0) {
+      trunc_head(dn, pl_get(&g_pins, spi), 29);
+      ui_text(2, DETAIL_NAME_Y, UI_SELTEXT, dn);
+      ui_text(2, DETAIL_META_Y, UI_DIM, "Pinned  A open  ST menu");
+    } else if (!se) {
       ui_text(2, DETAIL_NAME_Y, UI_DIRCLR, "[..] parent folder");
     } else {
       ui_truncate(dn, se->name, 29);
@@ -479,25 +515,38 @@ static void render_grid(int sel, int top) {
       int idx = top + r * cols + c;
       if (idx >= rows) break;
       FsEntry* e = br_entry(idx);
+      int pi = br_pin(idx);
       int tx = margin + c * tile_w;
       int ty = GRID_Y0 + r * GRID_TILE_H;
       bool seld = (idx == sel);
       int iw = 22, ix = tx + (tile_w - iw) / 2, iy = ty + 2;
-      if (!e)             icon_folder(ix, iy, UI_WARN, UI_BORDER);    /* [..] */
+      if (pi >= 0) {                                                  /* pinned path */
+        const char* pp = pl_get(&g_pins, pi);
+        if (fsop_ext(base_name(pp))[0]) icon_file(ix, iy, UI_TITLE, UI_BORDER, UI_PANEL, false);
+        else                            icon_folder(ix, iy, UI_TITLE, UI_BORDER);
+        m3_rect(tx + tile_w - 8, ty + 1, tx + tile_w - 3, ty + 6, UI_OK);   /* pin marker */
+      }
+      else if (!e)        icon_folder(ix, iy, UI_WARN, UI_BORDER);    /* [..] */
       else if (e->is_dir) icon_folder(ix, iy, UI_DIRCLR, UI_BORDER);
       else                icon_file(ix, iy, UI_SAVECLR, UI_BORDER, UI_PANEL, ext_is_image(e->name));
       if (g_selmode && e && g_marked[(int)(e - g_entries)])
         m3_rect(tx + 1, ty + 1, tx + 6, ty + 6, UI_OK);              /* multi-select mark */
       char nm[128];
-      ui_truncate(nm, e ? e->name : "..", label_cols);
+      ui_truncate(nm, pi >= 0 ? base_name(pl_get(&g_pins, pi)) : (e ? e->name : ".."), label_cols);
       if (seld) m3_rect(tx, ty + 21, tx + tile_w - 2, ty + 30, UI_SEL);
-      ui_text(tx + 1, ty + 22, seld ? UI_SELTEXT : (e && !e->is_dir ? UI_SAVECLR : UI_DIRCLR), nm);
+      ui_text(tx + 1, ty + 22, seld ? UI_SELTEXT : (pi >= 0 ? UI_TITLE : (e && !e->is_dir ? UI_SAVECLR : UI_DIRCLR)), nm);
     }
   }
 
   /* selected item's fuller name + meta (reuse the list view's detail rows) */
   FsEntry* se = br_entry(sel);
-  if (!se) {
+  int spi = br_pin(sel);
+  if (spi >= 0) {
+    char pn[128];
+    trunc_head(pn, pl_get(&g_pins, spi), 29);
+    ui_text(2, DETAIL_NAME_Y, UI_SELTEXT, pn);
+    ui_text(2, DETAIL_META_Y, UI_DIM, "Pinned  A open  ST menu");
+  } else if (!se) {
     ui_text(2, DETAIL_NAME_Y, UI_DIRCLR, "[..] parent folder");
   } else {
     char dn[128], dm[64], dmt[64], dt[20];
@@ -602,7 +651,7 @@ static void load_pathlist(const char* path, PathList* l) {
 }
 
 /* Persist a path list (verified save, no .bak~). false = not written. */
-__attribute__((unused)) static bool save_pathlist(const char* path, const PathList* l) {
+static bool save_pathlist(const char* path, const PathList* l) {
   if (!can_write()) return false;
   ensure_app_dir();
   int n = pl_serialize(l, (char*)g_scratch.text, sizeof(g_scratch.text));
@@ -643,6 +692,46 @@ static void msg_screen(const char* title, u16 ink, const char* body) {
   if (body) ui_text(6, 72, UI_TEXT, body);
   ui_text(6, 110, UI_DIM, "B = back");
   wait_keys(KEY_B);
+}
+
+/* Generic scrolling pick list (A = choose, B = back). `labels` are short
+ * strings; returns the chosen index or -1. */
+static int pick_list(const char* title, const char* const* labels, int n, int sel) {
+  const int VIS = 9;
+  int top = 0;
+  bool dirty = true;
+  if (n <= 0) return -1;
+  if (sel < 0 || sel >= n) sel = 0;
+  while (1) {
+    if (sel < top) top = sel;
+    if (sel >= top + VIS) top = sel - VIS + 1;
+    if (top < 0) top = 0;
+    if (dirty) {
+      char hb[64];
+      ui_clear();
+      ui_truncate(hb, title, 29);
+      ui_text(2, HDR_Y, UI_TITLE, hb);
+      ui_panel(0, 12, 240, 118, UI_PANEL, UI_BORDER);
+      for (int r = 0; r < VIS && top + r < n; r++) {
+        char lb[128];
+        ui_truncate(lb, labels[top + r], 28);
+        ui_text_sel(4, 18 + r * 12, 232, top + r == sel, UI_TEXT, lb);
+      }
+      if (top > 0)        ui_text(230, 18, UI_DIM, "^");
+      if (top + VIS < n)  ui_text(230, 18 + (VIS - 1) * 12, UI_DIM, "v");
+      ui_text(2, FOOT_Y, UI_DIM, "A choose   B back");
+      dirty = false;
+    }
+    vsync();
+    u16 mv  = key_repeat(KEY_UP | KEY_DOWN);
+    u16 hit = key_hit(KEY_A | KEY_B);
+    if (!mv && !hit) continue;
+    dirty = true;
+    if (hit & KEY_B) return -1;
+    if (hit & KEY_A) return sel;
+    if (mv & KEY_DOWN) sel = (sel + 1) % n;
+    if (mv & KEY_UP)   sel = (sel == 0) ? n - 1 : sel - 1;
+  }
 }
 
 static bool do_mkdir(void) {
@@ -1650,7 +1739,7 @@ static bool find_modal(void) {
  * are reachable even on an empty directory / the [..] row. */
 static bool actions_menu(const FsEntry* e) {
   enum { A_OPEN, A_VIEW, A_EDIT, A_INFO, A_FOLDERSIZE, A_FIND, A_RENAME, A_COPY, A_CUT, A_DUPLICATE,
-         A_PASTE, A_RDO, A_HID, A_DELETE, A_NEWFILE, A_MKDIR, A_SELECT, A_TRASH,
+         A_PASTE, A_PIN, A_RDO, A_HID, A_DELETE, A_NEWFILE, A_MKDIR, A_SELECT, A_TRASH,
          A_SETTINGS, A_REBOOT };
   int  ids[24];
   char labels[24][32];
@@ -1678,6 +1767,9 @@ static bool actions_menu(const FsEntry* e) {
       ids[ni] = A_PASTE; siprintf(labels[ni++], "Paste %s here", g_clip_op == CLIP_CUT ? "(move)" : "(copy)");
     }
     if (e) {
+      char pp[PATH_MAX];
+      bool pinned = path_join(g_cwd, e->name, pp) && pl_find(&g_pins, pp) >= 0;
+      ids[ni] = A_PIN; strcpy(labels[ni++], pinned ? "Unpin" : "Pin to top");
       ids[ni] = A_RDO; siprintf(labels[ni++], "Read-only: %s", (e->attrib & AM_RDO) ? "ON" : "off");
       ids[ni] = A_HID; siprintf(labels[ni++], "Hidden: %s",    (e->attrib & AM_HID) ? "ON" : "off");
       ids[ni] = A_DELETE;
@@ -1756,6 +1848,16 @@ static bool actions_menu(const FsEntry* e) {
           if (!path_join(g_cwd, e->name, np)) { msg_screen("Path too long", UI_WARN, NULL); break; }
           if (txtedit_run(np, e->name, g_scratch.text, sizeof(g_scratch.text))) return true;
           break;
+        }
+        case A_PIN: {      /* pin/unpin this path; the cursor re-selects it by name */
+          char np[PATH_MAX];
+          if (!path_join(g_cwd, e->name, np)) { msg_screen("Path too long", UI_WARN, NULL); break; }
+          if (under_trash(np)) { msg_screen("Cannot pin", UI_WARN, "inside the Trash"); break; }
+          if (pl_find(&g_pins, np) >= 0) (void)pl_remove(&g_pins, np);
+          else if (pl_add(&g_pins, np) == PL_FULL) { msg_screen("Pin list full (memory)", UI_WARN, NULL); break; }
+          if (!save_pathlist(PINS_PATH, &g_pins)) msg_screen("Pin changed", UI_WARN, "but not saved to SD");
+          strcpy(g_find_sel, e->name);
+          return true;
         }
         case A_INFO:       properties_screen(e);              break;
         case A_FOLDERSIZE: do_foldersize(e);                  break;
@@ -2287,15 +2389,72 @@ static bool batch_menu(int count) {
  * that follows the actions menu. */
 static void apply_find_sel(int* sel, int* top) {
   if (!g_find_sel[0]) return;             /* not a find-navigate: leave the cursor put */
-  int row = 0;                            /* default: top of the freshly-listed folder */
+  int row = br_home();                    /* default: top of the freshly-listed folder */
   for (int i = 0; i < g_n; i++) {
     if (!strcmp(g_entries[i].name, g_find_sel)) {
-      row = i + (at_root() ? 0 : 1);      /* +1 for the synthetic [..] row */
+      row = br_entry_row(i);              /* past the pins and the synthetic [..] row */
       break;
     }
   }
   *sel = row; *top = 0;                    /* if the match isn't listed (e.g. hidden), land at top */
   g_find_sel[0] = 0;
+}
+
+/* Jump to an absolute path: a folder becomes the cwd; a file makes its parent
+ * the cwd and queues its name in g_find_sel so apply_find_sel() lands on it.
+ * Returns 1 = folder, 2 = file (name copied to name_out), 0 = refused (Trash),
+ * -1 = not found. The caller rescans and handles the missing-target prompt. */
+static int goto_path(const char* path, char* name_out) {
+  FILINFO fno;
+  bool isdir;
+  if (path[0] != '/') return -1;
+  if (!strcmp(path, "/")) isdir = true;
+  else {
+    if (f_stat(path, &fno) != FR_OK) return -1;
+    isdir = (fno.fattrib & AM_DIR) != 0;
+  }
+  if (under_trash(path)) return 0;
+  if (isdir) { strcpy(g_cwd, path); return 1; }
+  parent_of(path, g_cwd);
+  strcpy(name_out, base_name(path));
+  strcpy(g_find_sel, name_out);
+  return 2;
+}
+
+static void pin_unpin(int pi) {
+  char p[PATH_MAX];
+  strcpy(p, pl_get(&g_pins, pi));
+  (void)pl_remove(&g_pins, p);
+  if (!save_pathlist(PINS_PATH, &g_pins)) msg_screen("Pin removed", UI_WARN, "but not saved to SD");
+}
+
+/* A on a pin row: navigate there. A file also opens its actions menu (called
+ * from the browser loop, never from inside actions_menu, so no recursion). */
+static void open_pin(int pi, int* sel, int* top) {
+  char path[PATH_MAX], name[FS_NAME_CAP];
+  strcpy(path, pl_get(&g_pins, pi));
+  int r = goto_path(path, name);
+  if (r < 0) {
+    if (can_write() && confirm("Not found.", "Unpin it?")) pin_unpin(pi);
+    else if (!can_write()) msg_screen("Not found", UI_WARN, path);
+    return;
+  }
+  if (r == 0) { msg_screen("Reserved folder", UI_DIM, "Use the Trash action"); return; }
+  rescan();
+  *sel = br_home(); *top = 0;
+  if (r == 1) return;
+  apply_find_sel(sel, top);
+  FsEntry* e = br_entry(*sel);
+  if (e && !strcmp(e->name, name) && actions_menu(e)) { rescan(); apply_find_sel(sel, top); }
+}
+
+/* START on a pin row. */
+static void pin_menu(int pi, int* sel, int* top) {
+  const char* items[2] = { "Open", "Unpin" };
+  int n = can_write() ? 2 : 1;
+  int c = pick_list("Pinned item", items, n, 0);
+  if (c == 0) open_pin(pi, sel, top);
+  else if (c == 1) { pin_unpin(pi); if (*sel >= br_rows()) *sel = br_home(); }
 }
 
 /* ---- column (Miller) view ---------------------------------------------- */
@@ -2339,10 +2498,12 @@ static void render_columns(int sel, int top) {
     int row = top + r;
     if (row >= rows) break;
     FsEntry* e = br_entry(row);
+    int pi = br_pin(row);
     int y = ROW0_Y + r * ROW_H;
     char nm[64], line[80];
     u16 ink;
-    if (!e) { siprintf(line, "[..]"); ink = UI_WARN; }
+    if (pi >= 0) { trunc_head(nm, pl_get(&g_pins, pi), 12); siprintf(line, "# %s", nm); ink = UI_TITLE; }
+    else if (!e) { siprintf(line, "[..]"); ink = UI_WARN; }
     else if (e->is_dir) { ui_truncate(nm, e->name, 12); siprintf(line, "%-12s>", nm); ink = UI_DIRCLR; }
     else { ui_truncate(nm, e->name, 13); siprintf(line, "%s", nm); ink = UI_SAVECLR; }
     ui_text_sel(2, y, 113, row == sel, ink, line);
@@ -2351,7 +2512,14 @@ static void render_columns(int sel, int top) {
   /* right preview of the highlighted entry */
   int rx = 122;
   FsEntry* se = br_entry(sel);
-  if (!se) {
+  int spi = br_pin(sel);
+  if (spi >= 0) {
+    char pn[64];
+    trunc_head(pn, pl_get(&g_pins, spi), 14);
+    ui_text(rx, ROW0_Y, UI_SELTEXT, pn);
+    ui_text(rx, ROW0_Y + 14, UI_DIM, "Pinned");
+    ui_text(rx, ROW0_Y + 28, UI_DIM, "A open  ST menu");
+  } else if (!se) {
     ui_text(rx, ROW0_Y, UI_DIM, "Parent folder");
   } else if (se->is_dir) {
     int n = g_col_right_n;
@@ -2397,9 +2565,9 @@ static void col_ascend(int* sel, int* top) {
   strcpy(leaving, base_name(g_cwd));
   path_up();
   rescan();
-  int row = 0;
+  int row = br_home();
   for (int i = 0; i < g_n; i++)
-    if (!strcmp(g_entries[i].name, leaving)) { row = i + (at_root() ? 0 : 1); break; }
+    if (!strcmp(g_entries[i].name, leaving)) { row = br_entry_row(i); break; }
   *sel = row; *top = 0;
   col_scan_right(br_entry(*sel));
 }
@@ -2408,7 +2576,7 @@ static void col_ascend(int* sel, int* top) {
  * (via the actions menu -> Settings). Manages g_cwd itself; the caller rescans. */
 static void column_view(void) {
   rescan();                                  /* left pane = current g_cwd */
-  int sel = 0, top = 0;
+  int sel = br_home(), top = 0;
   col_scan_right(br_entry(sel));
   bool dirty = true;
   while (g_set.view_mode == VIEW_COLUMNS) {
@@ -2434,16 +2602,18 @@ static void column_view(void) {
     else if (hit & KEY_R)   { sel += COL_ROWS; if (sel >= rows) sel = rows ? rows - 1 : 0; col_scan_right(br_entry(sel)); }
     else if (hit & (KEY_RIGHT | KEY_A)) {
       FsEntry* e = br_entry(sel);
-      if (!e) { if (!at_root()) col_ascend(&sel, &top); }            /* [..] -> up */
+      int pi = br_pin(sel);
+      if (pi >= 0) { if (hit & KEY_A) { open_pin(pi, &sel, &top); col_scan_right(br_entry(sel)); } }   /* pinned path */
+      else if (!e) { if (br_is_up(sel)) col_ascend(&sel, &top); }    /* [..] -> up */
       else if (e->is_dir) {                                          /* descend */
         char np[PATH_MAX];
         if (path_join(g_cwd, e->name, np)) {
           if (under_trash(np)) msg_screen("Reserved folder", UI_DIM, "Use the Trash action");
-          else { strcpy(g_cwd, np); rescan(); sel = 0; top = 0; col_scan_right(br_entry(0)); }
+          else { strcpy(g_cwd, np); rescan(); sel = br_home(); top = 0; col_scan_right(br_entry(br_home())); }
         }
       } else if (hit & KEY_A) {                                      /* file -> actions menu */
-        if (actions_menu(e)) { rescan(); sel = 0; top = 0; apply_find_sel(&sel, &top); }
-        if (sel >= br_rows()) sel = 0;
+        if (actions_menu(e)) { rescan(); sel = br_home(); top = 0; apply_find_sel(&sel, &top); }
+        if (sel >= br_rows()) sel = br_home();
         col_scan_right(br_entry(sel));
       }
     }
@@ -2453,26 +2623,31 @@ static void column_view(void) {
       g_sortkey = (FsSortKey)(s / 2);
       g_sortrev = (s & 1) != 0;
       fsop_sort(g_entries, g_n, g_sortkey, g_sortrev);
-      sel = 0; top = 0; col_scan_right(br_entry(0));
+      sel = br_home(); top = 0; col_scan_right(br_entry(br_home()));
     }
     else if (hit & KEY_START) {                                      /* actions menu (Settings/Find/...) */
-      FsEntry* e = br_entry(sel);
-      if (actions_menu(e)) { rescan(); sel = 0; top = 0; apply_find_sel(&sel, &top); }
-      if (sel >= br_rows()) sel = 0;
+      int pi = br_pin(sel);
+      if (pi >= 0) { pin_menu(pi, &sel, &top); }                     /* Open / Unpin */
+      else {
+        FsEntry* e = br_entry(sel);
+        if (actions_menu(e)) { rescan(); sel = br_home(); top = 0; apply_find_sel(&sel, &top); }
+      }
+      if (sel >= br_rows()) sel = br_home();
       col_scan_right(br_entry(sel));
     }
   }
 }
 
 static void run_browser(void) {
-  int sel = 0, top = 0;
+  int sel = br_home(), top = 0;
   bool dirty = true;
   rescan();
+  sel = br_home();
 
   while (1) {
     if (g_set.view_mode == VIEW_COLUMNS) {   /* the column view runs its own loop */
       column_view();
-      rescan(); sel = 0; top = 0; dirty = true;
+      rescan(); sel = br_home(); top = 0; dirty = true;
       continue;
     }
     int rows  = br_rows();
@@ -2534,7 +2709,7 @@ static void run_browser(void) {
       } else if (hit & KEY_START) {
         int mc = marked_count();
         if (mc == 0) msg_screen("No items marked", UI_DIM, "A marks the highlighted item");
-        else if (batch_menu(mc)) { rescan(); sel = 0; top = 0; }
+        else if (batch_menu(mc)) { rescan(); sel = br_home(); top = 0; }
       } else if (hit & KEY_B) {
         g_selmode = false;
         memset(g_marked, 0, sizeof(g_marked));
@@ -2546,30 +2721,38 @@ static void run_browser(void) {
       g_sortkey = (FsSortKey)(s / 2);
       g_sortrev = (s & 1) != 0;
       fsop_sort(g_entries, g_n, g_sortkey, g_sortrev);
-      sel = 0; top = 0;
+      sel = br_home(); top = 0;
     }
     else if (hit & KEY_A) {
       /* A: enter a folder, go up on [..], or open the actions menu on a file */
       FsEntry* e = br_entry(sel);
-      if (!e) {                                   /* [..] up-entry */
-        if (!at_root()) { path_up(); rescan(); sel = 0; top = 0; }
+      int pi = br_pin(sel);
+      if (pi >= 0) {                              /* pinned path: jump to it */
+        open_pin(pi, &sel, &top);
+      } else if (!e) {                            /* [..] up-entry */
+        if (br_is_up(sel)) { path_up(); rescan(); sel = br_home(); top = 0; }
       } else if (e->is_dir) {
         char np[PATH_MAX];
         if (path_join(g_cwd, e->name, np)) {
           if (under_trash(np)) msg_screen("Reserved folder", UI_DIM, "Use the Trash action");  /* never browse the bin */
-          else { strcpy(g_cwd, np); rescan(); sel = 0; top = 0; }
+          else { strcpy(g_cwd, np); rescan(); sel = br_home(); top = 0; }
         }
       } else {
         if (actions_menu(e)) { rescan(); apply_find_sel(&sel, &top); }   /* file -> actions menu */
       }
     }
     else if (hit & KEY_B) {
-      if (!at_root()) { path_up(); rescan(); sel = 0; top = 0; }
+      if (!at_root()) { path_up(); rescan(); sel = br_home(); top = 0; }
     }
     else if (hit & KEY_START) {
       /* START: open the actions menu (file, folder, or [..]) — View lives inside it */
-      FsEntry* e = br_entry(sel);
-      if (actions_menu(e)) { rescan(); apply_find_sel(&sel, &top); }
+      int pi = br_pin(sel);
+      if (pi >= 0) {
+        pin_menu(pi, &sel, &top);                 /* Open / Unpin */
+      } else {
+        FsEntry* e = br_entry(sel);
+        if (actions_menu(e)) { rescan(); apply_find_sel(&sel, &top); }
+      }
     }
   }
 }
