@@ -533,3 +533,94 @@ FRESULT fsop_apply_edits(const char* path, const HexEdit* edits, int n) {
   }
   return FR_OK;
 }
+
+/* ---- verified buffer save (text editor, app config files) -------------- */
+
+int fsop_same_chain(const char* a, const char* b) {
+  FIL fa, fb;
+  int same = -1;                                     /* unknown until both opened */
+  if (a == NULL || b == NULL) return -1;
+  if (f_open(&fa, a, FA_READ) != FR_OK) return -1;
+  if (f_open(&fb, b, FA_READ) == FR_OK) {
+    same = (fa.obj.sclust != 0 && fa.obj.sclust == fb.obj.sclust) ? 1 : 0;
+    f_close(&fb);
+  }
+  f_close(&fa);
+  return same;
+}
+
+static FRESULT save_write_tmp(const char* tmp, const uint8_t* data, uint32_t len) {
+  FIL f;
+  FRESULT fr = f_open(&f, tmp, FA_WRITE | FA_CREATE_NEW);
+  if (fr == FR_EXIST) return FSOP_ERR_LEFTOVER;
+  if (fr != FR_OK) return fr;
+  uint32_t pos = 0;
+  while (pos < len && fr == FR_OK) {
+    UINT bw = 0, n = (len - pos > 4096u) ? 4096u : (UINT)(len - pos);
+    fr = f_write(&f, data + pos, n, &bw);
+    if (fr == FR_OK && bw < n) fr = FR_DENIED;   /* disk full */
+    pos += n;
+  }
+  FRESULT fc = f_close(&f);
+  return (fr != FR_OK) ? fr : fc;
+}
+
+static FRESULT save_verify_tmp(const char* tmp, const uint8_t* data, uint32_t len) {
+  FIL f;
+  FRESULT fr = f_open(&f, tmp, FA_READ);
+  if (fr != FR_OK) return fr;
+  uint32_t pos = 0;
+  for (;;) {
+    UINT br = 0;
+    fr = f_read(&f, s_copybuf, sizeof(s_copybuf), &br);
+    if (fr != FR_OK) break;
+    if (br == 0) { if (pos != len) fr = FR_INT_ERR; break; }   /* EOF: lengths must match */
+    if ((uint32_t)br > len - pos || memcmp(s_copybuf, data + pos, br) != 0) { fr = FR_INT_ERR; break; }
+    pos += br;
+  }
+  f_close(&f);
+  return fr;
+}
+
+static FRESULT save_swap(const char* path, const char* tmp, const char* bak, bool existed) {
+  FRESULT fr;
+  FILINFO fno;
+  if (!existed) return f_rename(tmp, path);
+  if (f_stat(bak, &fno) == FR_OK) {                 /* replace a prior backup */
+    if (fsop_same_chain(path, bak) != 0) return FSOP_ERR_SHARED;   /* shared OR unknown: never unlink */
+    if (fno.fattrib & AM_RDO) f_chmod(bak, 0, AM_RDO);
+    fr = f_unlink(bak);
+    if (fr != FR_OK) return fr;
+  }
+  fr = f_rename(path, bak);
+  if (fr != FR_OK) return fr;
+  fr = f_rename(tmp, path);
+  if (fr != FR_OK) {                                 /* restore on failure */
+    if (f_rename(bak, path) != FR_OK) return fr;     /* original stays as .bak~, new as .txtnew~ */
+    return fr;
+  }
+  return FR_OK;
+}
+
+FRESULT fsop_save_buffer(const char* path, const uint8_t* data, uint32_t len,
+                         bool keep_backup) {
+  char tmp[FS_PATH_CAP], bak[FS_PATH_CAP];
+  FILINFO fno;
+  if (path == NULL || (data == NULL && len > 0)) return FR_INVALID_PARAMETER;
+  if ((unsigned)strlen(path) + 10 >= FS_PATH_CAP) return FR_NOT_ENOUGH_CORE;
+  strcpy(tmp, path); strcat(tmp, ".txtnew~");
+  strcpy(bak, path); strcat(bak, ".bak~");
+  if (f_stat(tmp, &fno) == FR_OK) return FSOP_ERR_LEFTOVER;   /* never truncate it */
+  bool existed = (f_stat(path, &fno) == FR_OK);
+  FRESULT fr = save_write_tmp(tmp, data, len);
+  if (fr == FSOP_ERR_LEFTOVER) return fr;            /* not ours: leave it */
+  if (fr == FR_OK) fr = save_verify_tmp(tmp, data, len);
+  if (fr != FR_OK) { f_unlink(tmp); return fr; }
+  fr = save_swap(path, tmp, bak, existed);
+  if (fr == FR_OK) {
+    if (existed && !keep_backup) f_unlink(bak);
+    return FR_OK;
+  }
+  if (!existed || fr == FSOP_ERR_SHARED || f_stat(path, &fno) == FR_OK) f_unlink(tmp);   /* original in place: drop temp */
+  return fr;
+}

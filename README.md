@@ -71,7 +71,7 @@ only on the Omega; the EverDrive stays read-only):
   selection mode. (Copy/Cut feed the same clipboard, so you then navigate and Paste.)
 
 This completes the core file-manager feature set. Every write is confirmed and
-logged to `file_browser_gba_log.txt`.
+logged to `/file_browser_gba/log.txt`.
 
 **Phase 3 (Omega-only)** — an in-place **hex editor**. From the hex
 viewer, **START** enters EDIT mode: a white-box cursor marks the editable byte,
@@ -92,7 +92,8 @@ backspaces before it.
 **Phase 4 (settings, themes, reboot)** — quality-of-life, reached from the actions
 menu (always present on **both** carts):
 
-- **Settings menu** with persistent preferences saved to `/file_browser_gba.cfg`
+- **Settings menu** with persistent preferences saved to `/file_browser_gba/settings.cfg`
+  (the pre-1.1 root `/file_browser_gba.cfg` is still read if the new file is absent)
   (written on the Omega only; read on both carts — on the EverDrive settings are
   session-only and reset to defaults next launch). UP/DOWN pick a row, LEFT/RIGHT
   change the value (numeric rows auto-repeat on hold), **A** saves, **B** cancels
@@ -122,6 +123,19 @@ menu (always present on **both** carts):
 - **Reboot to loader** — soft-reboot back to the cart's loader menu (EZ-Flash
   kernel) instead of power-cycling. **Confirmed working on the EZ-Flash Omega
   DE.** Writes no data. (The EverDrive path is less tested.)
+
+**Editing, pins and shortcuts (v1.1 candidate, Omega-only writes)**:
+
+- **Text editor** - *Edit text* in the actions menu opens files up to 32 KiB with an
+  on-screen keyboard, undo, CRLF/LF preservation and a verified save that keeps the
+  original as `<file>.bak~`.
+- **Pin to top** - pinned files/folders appear first in every folder (List / Grid /
+  Columns); A jumps to the target.
+- **START-menu shortcuts** - saved paths shown as the first rows of the START menu.
+- **Button combos** - hold SELECT and press UP/DOWN/LEFT/RIGHT/A/B/L/R to jump to a
+  bound path or run a bound action. Release SELECT alone to cycle the sort order.
+- All of the tool's files live in `/file_browser_gba/` on the card
+  (`settings.cfg`, `log.txt`, `pins.txt`, `shortcuts.txt`, `buttons.txt`).
 
 **Recycle bin / Trash (Phase 7, Omega-only)** — `Delete` doesn't have to erase:
 
@@ -315,7 +329,7 @@ File-Browser-GBA/
     osk.c/.h        # on-screen QWERTY keyboard with a movable caret
     ui.c/.h         # Mode-3 bitmap UI layer
     theme.c/.h      # 5 runtime color themes; UI_* macros read the active theme
-    cfg.c/.h        # /file_browser_gba.cfg INI settings (load both carts, save Omega-only)
+    cfg.c/.h        # /file_browser_gba/settings.cfg INI settings (load both carts, save Omega-only)
     gba_rtc.c/.h    # cartridge RTC read (file timestamps)         [vendored shared]
     log.c/.h        # screen + mGBA + SD triple logger              [vendored shared]
   lib/

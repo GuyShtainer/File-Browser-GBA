@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 /* Persistent user settings for the SD file browser. Read on both carts; written
- * Omega-only (best-effort) to /file_browser_gba.cfg. Mirrors the record-mixer's
+ * Omega-only (best-effort) to /file_browser_gba/settings.cfg (old root file read as fallback). Mirrors the record-mixer's
  * app_config INI pattern. */
 
 enum { FREE_B = 0, FREE_KB, FREE_MB, FREE_GB, FREE_UNIT_COUNT };
@@ -33,7 +33,7 @@ typedef struct {
 extern Settings g_set;
 
 void cfg_defaults(void);            /* reset g_set to built-in defaults */
-void cfg_load(const char* path);    /* read INI into g_set (defaults if file/key absent) */
+bool cfg_load(const char* path);    /* read INI into g_set (defaults if file/key absent); false = file absent */
 bool cfg_save(const char* path);    /* write g_set (Omega-only; best-effort) */
 
 #endif /* CFG_H */

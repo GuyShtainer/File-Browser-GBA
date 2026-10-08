@@ -10,7 +10,7 @@
 > unproven detail.)
 
 The gate for calling the whole tool **done**. Supersedes the per-phase list in
-`HARDWARE-TEST-PHASE1.md`. SD log path is `/file_browser_gba_log.txt` (card root, flushed
+`HARDWARE-TEST-PHASE1.md`. SD log path is `/file_browser_gba/log.txt` (was `/file_browser_gba_log.txt` before v1.1) (card root, flushed
 after every op). B1–B50 (P0–P7, including Trash) were observed on a real **EZ-Flash
 Omega DE** (with the EverDrive read-only check and the original-Omega caveat as noted);
 the only item added since is **B51 — auto-clear old trash**.
@@ -536,3 +536,75 @@ RTC is unreadable, it deletes nothing.
 - [ ] Set **Auto-clear = Off** → nothing is ever auto-deleted, regardless of age.
 - [ ] Sanity: it only ever removes items inside `/.sdtrash` (no file outside the
       bin is touched). PASS / FAIL / NOTES: ______________________________
+
+---
+
+# v1.1 candidate addendum - text editor, pins, shortcuts, button combos  -> B52-B62  (write, Omega-only)
+
+None of this is emulated: the SD write/rename path and the on-screen UI must be
+eyeballed on the real cart. All new files live in `/file_browser_gba/`.
+
+## (V11-1) Edit + save + .bak~ on a real file  -> B52
+- [ ] Edit text on a small `.txt`: type with the keyboard (all 3 pages, Space, Enter,
+      Tab), move the caret in Navigate mode, undo with SELECT. Save (START menu).
+      Message `Saved - previous kept as .bak~`; PC check: the file has the edit,
+      `<file>.bak~` is the original byte for byte, no `.txtnew~` remains.
+- [ ] Exit with unsaved changes asks Save and exit / Exit without saving / Cancel.
+- [ ] Read-only file -> `File is read-only`, editor does not open. File > 32 KiB: no
+      *Edit text* item. PASS / FAIL / NOTES: ______________________________
+
+## (V11-2) CRLF file round-trip  -> B53
+- [ ] Open a CRLF text file: status shows `CRLF`; Enter inserts a CRLF pair;
+      backspace over a line break removes both bytes; save and verify on a PC that
+      every untouched line still ends in CRLF. PASS / FAIL / NOTES: ____________
+
+## (V11-3) Binary-warning path  -> B54
+- [ ] Open a file with non-text bytes: prompt `Binary bytes shown as '.', kept as-is`.
+      Edit one ASCII character elsewhere, save; a PC diff shows ONLY that change.
+      PASS / FAIL / NOTES: ______________________________
+
+## (V11-4) Leftover .txtnew~ refusal  -> B55
+- [ ] Put a file `X.txtnew~` next to `X` on a PC, then edit and save `X`: the save is
+      refused with `Leftover temp file` and `X.txtnew~` is untouched. PASS / FAIL: ______
+
+## (V11-5) Pins persist and show in all views  -> B56
+- [ ] Pin a file and a folder; they are the first rows in List, Grid and Columns in
+      several folders. Power-cycle: pins still there (`pins.txt` on the card).
+- [ ] A on a pinned folder enters it; A on a pinned file lands on it and opens its
+      actions menu. START on a pin = Open / Unpin. PASS / FAIL / NOTES: ________
+
+## (V11-6) Pin to a deleted folder  -> B57
+- [ ] Pin a folder, delete it on a PC, A on the pin -> `Not found. Unpin it?`; A
+      removes the pin. PASS / FAIL / NOTES: ______________________________
+
+## (V11-7) START-menu shortcuts  -> B58
+- [ ] Add shortcut on a folder and a file; they are the first START-menu rows in any
+      folder, A jumps there (file: cursor lands on it), SELECT removes, Remove
+      shortcut also works. The 17th add says `Shortcut list full (16)`.
+      PASS / FAIL / NOTES: ______________________________
+
+## (V11-8) Button combos  -> B59
+- [ ] Bind a folder via *Bind to button...* and an action via Settings -> *Button
+      shortcuts...*; SELECT+key runs each; `buttons.txt` survives a power cycle.
+      Check at least: a path, Find, Paste here, Show/hide hidden, Cycle view (all
+      three views), Go to root. PASS / FAIL / NOTES: ______________________________
+
+## (V11-9) SELECT alone still cycles sort  -> B60
+- [ ] Tap SELECT (no other key): sort order cycles on release. Holding SELECT and
+      pressing a bound key does NOT cycle it. In multi-select mode SELECT still
+      marks all/none immediately. PASS / FAIL / NOTES: ____________________
+
+## (V11-10) Config migrated into /file_browser_gba/  -> B61
+- [ ] On a card with an old root `/file_browser_gba.cfg`: first launch shows the old
+      settings; after changing one, `/file_browser_gba/settings.cfg` and `log.txt`
+      exist and the old root file is untouched. PASS / FAIL / NOTES: ____________
+
+## (V11-11) Pins/shortcuts/buttons load from `.bak~` when the file is missing  -> B62
+- [ ] On the PC rename `/file_browser_gba/pins.txt` to `pins.txt.bak~` AND create an
+      empty `pins.txt.txtnew~` next to it (what a power cut between a save's two
+      renames leaves); boot: pins still appear and log.txt has
+      "loaded ... from .bak~ (file missing, temp present)". Then *Pin to top* on any
+      entry is refused with "pins.txt.txtnew~ / left over - check it first", then "Pin changed / but
+      not saved to SD" (the pin stays for this session); delete
+      the temp on the PC and pinning works again. Control: with ONLY `pins.txt.bak~`
+      (no temp) the boot shows no pins. PASS / FAIL / NOTES: ____
