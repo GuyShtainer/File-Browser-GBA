@@ -33,6 +33,8 @@
 #include "ui.h"
 #include "fs_ops.h"
 #include "osk.h"
+#include "txtedit.h"
+#include "textbuf.h"
 #include "cfg.h"
 #include "gba_rtc.h"
 
@@ -91,7 +93,19 @@ static bool               g_selmode = false;
  * Find action. g_find_sel holds the entry name to re-select after a find
  * navigates the browser into the match's folder ("" = none). */
 #define FIND_MAX 128
-static char     EWRAM_BSS g_find_paths[FIND_MAX][PATH_MAX];
+/* g_scratch overlays two never-simultaneous users: the Find results (live only
+ * inside find_modal(); g_find_sel is copied out before it returns, and nothing
+ * else reads g_find_paths/g_find_count) and the text editor's edit buffer
+ * (live only inside txtedit_run(), which actions_menu calls and find_modal is
+ * not running). */
+typedef union {
+  char    find_paths[FIND_MAX][PATH_MAX];
+  uint8_t text[TB_CAP];
+} Scratch;
+static Scratch EWRAM_BSS g_scratch __attribute__((aligned(4)));
+#define g_find_paths g_scratch.find_paths
+_Static_assert(TB_CAP <= FIND_MAX * PATH_MAX,
+               "text buffer must fit in the find-results overlay");
 static u8       EWRAM_BSS g_find_isdir[FIND_MAX];
 static int                g_find_count = 0;
 static bool               g_find_trunc = false;
@@ -1582,7 +1596,7 @@ static bool find_modal(void) {
  * [..] row. Find / Settings / Reboot are always present (both carts), so they
  * are reachable even on an empty directory / the [..] row. */
 static bool actions_menu(const FsEntry* e) {
-  enum { A_OPEN, A_VIEW, A_INFO, A_FOLDERSIZE, A_FIND, A_RENAME, A_COPY, A_CUT, A_DUPLICATE,
+  enum { A_OPEN, A_VIEW, A_EDIT, A_INFO, A_FOLDERSIZE, A_FIND, A_RENAME, A_COPY, A_CUT, A_DUPLICATE,
          A_PASTE, A_RDO, A_HID, A_DELETE, A_NEWFILE, A_MKDIR, A_SELECT, A_TRASH,
          A_SETTINGS, A_REBOOT };
   int  ids[24];
@@ -1596,6 +1610,7 @@ static bool actions_menu(const FsEntry* e) {
     }
     ids[ni] = A_INFO; strcpy(labels[ni++], "Info / properties");   /* info sits above the hex/text viewer */
     if (!e->is_dir) { ids[ni] = A_VIEW; strcpy(labels[ni++], "View (hex/text)"); }
+    if (!e->is_dir && can_write() && e->size <= TB_CAP) { ids[ni] = A_EDIT; strcpy(labels[ni++], "Edit text"); }
     if (e->is_dir) { ids[ni] = A_FOLDERSIZE; strcpy(labels[ni++], "Folder size"); }
   }
   ids[ni] = A_FIND; strcpy(labels[ni++], "Find...");   /* recursive search, both carts */
@@ -1680,6 +1695,13 @@ static bool actions_menu(const FsEntry* e) {
           char np[PATH_MAX];
           if (path_join(g_cwd, e->name, np)) return file_viewer(np, e->name, e->size);
           msg_screen("Path too long", UI_WARN, NULL);
+          break;
+        }
+        case A_EDIT: {     /* on-screen text editor; true when it saved (rescan) */
+          char np[PATH_MAX];
+          if (e->attrib & AM_RDO) { msg_screen("File is read-only", UI_WARN, NULL); break; }
+          if (!path_join(g_cwd, e->name, np)) { msg_screen("Path too long", UI_WARN, NULL); break; }
+          if (txtedit_run(np, e->name, g_scratch.text, sizeof(g_scratch.text))) return true;
           break;
         }
         case A_INFO:       properties_screen(e);              break;
