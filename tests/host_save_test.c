@@ -256,6 +256,12 @@ static void t_rename_faults(void) {
   rule_add(K_RENAME, ".txtnew~", NULL, 0);
   fr = fsop_save_buffer(P, NEWB, 2500, true);
   CHECK(fr != FR_OK && is(P, OLDB, 2000) && !exists(TMP) && !exists(BAK), "rename#2 fail: restored, fr=%d", (int)fr);
+  /* 2b. new file (no original), tmp -> path fails: the temp is dropped, nothing is left
+     (a leftover would block every later save of a first-time pins/shortcuts file) */
+  fresh_card(2048);
+  rule_add(K_RENAME, ".txtnew~", NULL, 0);
+  fr = fsop_save_buffer(P, NEWB, 2500, false);
+  CHECK(fr != FR_OK && !exists(P) && !exists(TMP) && !exists(BAK), "new-file rename fail: temp dropped, fr=%d", (int)fr);
   /* 3. both fail: data survives only as .bak~ (old) + .txtnew~ (new), neither deleted */
   fresh_card(2048); put(P, OLDB, 2000);
   rule_add(K_RENAME, ".txtnew~", NULL, 0);

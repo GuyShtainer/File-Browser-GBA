@@ -110,8 +110,15 @@ static void tx_save_error(FRESULT fr, const char* path, const char* name) {
     tx_msg("Save refused", "backup shares data with file", "original untouched");
   } else {
     FILINFO c;
-    if (f_stat(path, &c) != FR_OK) {
-      /* both renames failed: the data lives only in name.bak~ + name.txtnew~ */
+    char tp[FS_PATH_CAP];
+    bool tmp_left = false;
+    if (strlen(path) + 10 < FS_PATH_CAP) {
+      siprintf(tp, "%s.txtnew~", path);
+      tmp_left = (f_stat(tp, &c) == FR_OK);
+    }
+    if (f_stat(path, &c) != FR_OK && tmp_left) {
+      /* both renames failed: the data lives only in name.bak~ + name.txtnew~
+         (a NEW file whose rename failed has its temp dropped: no RECOVER) */
       tx_msg("Save failed - RECOVER", "see name.bak~ and", "name.txtnew~");
     } else {
       siprintf(l, "FatFs error %d", (int)fr);
@@ -219,7 +226,9 @@ static void tx_backspace(void) {
 static void tx_input_type(u16 mv, u16 hit) {
   /* the A that opened the keyboard must not auto-repeat into a typed key */
   if (!s_kb_armed) {
-    if (key_is_down(KEY_A)) mv &= (u16)~KEY_A; else s_kb_armed = true;
+    /* a fresh press (hit) or a released A arms; a still-held opening A is masked.
+       The release frame never reaches here (no mv/hit), so hit must count too. */
+    if ((hit & KEY_A) || !key_is_down(KEY_A)) s_kb_armed = true; else mv &= (u16)~KEY_A;
   }
   if (hit & KEY_START) { s_kb = false; return; }
   /* Clamp the column on a page switch: repro was abc page, top row, LEFT (col 9),

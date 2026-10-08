@@ -645,12 +645,19 @@ static uint32_t slurp_scratch(const char* path) {
   FIL f;
   UINT br = 0;
   FRESULT fo = f_open(&f, path, FA_READ);
-  if (fo == FR_NO_FILE) {            /* power cut between the two renames of a save: use the .bak~ */
-    char bak[PATH_MAX + 8];
-    if (strlen(path) + 6 <= sizeof(bak)) {
-      siprintf(bak, "%s.bak~", path);
-      fo = f_open(&f, bak, FA_READ);
-      if (fo == FR_OK) log_line("loaded %s from .bak~ (file missing)", path);
+  if (fo == FR_NO_FILE) {
+    /* A power cut between a save's two renames leaves <file>.bak~ + <file>.txtnew~
+     * and no <file>: load the .bak~. A stale .bak~ on its own (cut after the final
+     * rename, or the file deleted on purpose) is ignored; the next save removes it. */
+    char alt[PATH_MAX + 10];
+    FILINFO fi;
+    if (strlen(path) + 10 <= sizeof(alt)) {
+      siprintf(alt, "%s.txtnew~", path);
+      if (f_stat(alt, &fi) == FR_OK) {
+        siprintf(alt, "%s.bak~", path);
+        fo = f_open(&f, alt, FA_READ);
+        if (fo == FR_OK) log_line("loaded %s from .bak~ (file missing, temp present)", path);
+      }
     }
   }
   if (fo != FR_OK) return 0;
@@ -668,8 +675,8 @@ static void load_pathlist(const char* path, PathList* l) {
 static void msg_screen(const char* title, u16 ink, const char* body);
 static void save_leftover_msg(const char* path) {
   char l1[PATH_MAX + 16];
-  siprintf(l1, "%s.txtnew~ left over", base_name(path));
-  msg_screen(l1, UI_WARN, "check it first");
+  siprintf(l1, "%s.txtnew~", base_name(path));      /* "shortcuts.txt.txtnew~" = 21 cols, fits in 29 */
+  msg_screen(l1, UI_WARN, "left over - check it first");
 }
 
 /* Persist a path list (verified save, no .bak~). false = not written. */
@@ -3129,6 +3136,7 @@ int main(void) {
   load_pathlist(SHORTCUTS_PATH, &g_shortcuts);
   load_buttons();
   log_line("pins=%d shortcuts=%d", pl_count(&g_pins), pl_count(&g_shortcuts));
+  (void)log_flush_to_sd(LOG_PATH);   /* the load lines (incl. a .bak~ fallback) reach the card at boot */
   theme_apply(g_set.theme);
   g_sortkey = (FsSortKey)g_set.sort_key;
   g_sortrev = g_set.sort_rev;
