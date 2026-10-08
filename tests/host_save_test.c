@@ -24,7 +24,7 @@ static BYTE  s_work[1024];
 static unsigned char NEWB[CAP], OLDB[CAP], RB[CAP];
 
 /* ---- fault injection (the wrappers) ------------------------------------- */
-enum { K_OPEN, K_RENAME, K_UNLINK };
+enum { K_OPEN, K_RENAME, K_UNLINK, K_RENAME_LIE };   /* LIE: returns FR_OK without renaming (a card that acks a dropped metadata write) */
 typedef struct { int kind; const char* a_suf; const char* b_suf; int skip; int armed; int hits; } Rule;
 static Rule rules[4];
 static int tamper_mode;   /* 0 none, 1 flip last, 2 flip first, 3 short by 1, 4 long by 1 */
@@ -74,6 +74,7 @@ FRESULT wrap_f_open(FIL* fp, const TCHAR* path, BYTE mode) {
 }
 FRESULT wrap_f_rename(const TCHAR* a, const TCHAR* b) {
   if (rule_hit(K_RENAME, a, b)) return FR_DISK_ERR;
+  if (rule_hit(K_RENAME_LIE, a, b)) return FR_OK;
   return f_rename(a, b);
 }
 FRESULT wrap_f_unlink(const TCHAR* p) {
@@ -277,6 +278,36 @@ static void t_rename_faults(void) {
   CHECK(fr != FR_OK && is(P, OLDB, 2000) && is(BAK, NEWB, 77) && !exists(TMP), "bak delete fail: nothing lost, fr=%d", (int)fr);
 }
 
+/* A card that acknowledges a rename it did not keep. fsop_set_fs() is NOT called on the host: s_fs stays NULL, so
+ * the f_mount cache-drop is skipped (the RAM disk has no cached directory window to bypass); the byte re-read and
+ * the temp-gone check are what these cases exercise. */
+static void t_rename_lie(void) {
+  FRESULT fr;
+  fill(OLDB, 2000, 2); fill(NEWB, 2500, 1);
+  /* 5. tmp -> path acknowledged but dropped: RECOVER state, nothing deleted */
+  fresh_card(2048); put(P, OLDB, 2000);
+  rule_add(K_RENAME_LIE, ".txtnew~", ".txt", 0);
+  fr = fsop_save_buffer(P, NEWB, 2500, true);
+  CHECK(fr == FSOP_ERR_UNVERIFIED, "lie#2: unverified, fr=%d", (int)fr);
+  CHECK(!exists(P), "lie#2: target absent");
+  CHECK(is(BAK, OLDB, 2000), "lie#2: old bytes in .bak~");
+  CHECK(is(TMP, NEWB, 2500), "lie#2: new bytes kept in .txtnew~");
+  /* 5b. same length, different bytes, both renames dropped: a size-only recheck would pass */
+  fill(NEWB, 2000, 9);
+  fresh_card(2048); put(P, OLDB, 2000);
+  rule_add(K_RENAME_LIE, NULL, ".bak~", 0);
+  rule_add(K_RENAME_LIE, ".txtnew~", ".txt", 0);
+  fr = fsop_save_buffer(P, NEWB, 2000, true);
+  CHECK(fr == FSOP_ERR_UNVERIFIED, "lie both: unverified, fr=%d", (int)fr);
+  CHECK(is(P, OLDB, 2000), "lie both: original bytes in place");
+  CHECK(is(TMP, NEWB, 2000), "lie both: new bytes kept in .txtnew~");
+  CHECK(!exists(BAK), "lie both: no .bak~");
+  /* 5c. no lie: the recheck must not false-positive on a healthy card */
+  fresh_card(2048); put(P, OLDB, 2000);
+  fr = fsop_save_buffer(P, NEWB, 2000, true);
+  CHECK(fr == FR_OK && is(P, NEWB, 2000) && !exists(TMP), "no lie: saved, fr=%d", (int)fr);
+}
+
 static void t_disk_full(void) {
   FRESULT fr; DWORD free0 = 0, free1 = 0; FATFS* fsp;
   fresh_card(256);                                                 /* ~128 KiB card */
@@ -307,7 +338,7 @@ static void t_disk_full(void) {
 
 int main(void) {
   t_sizes(); t_verify_fail(); t_leftover(); t_crosslink(); t_zero_pair();
-  t_readonly_bak(); t_rename_faults(); t_disk_full();
+  t_readonly_bak(); t_rename_faults(); t_rename_lie(); t_disk_full();
   printf("host_save_test: %d passed, %d failed\n", passed, fails);
   rd_free();
   return fails ? 1 : 0;
