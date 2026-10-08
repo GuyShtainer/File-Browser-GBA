@@ -59,6 +59,7 @@
 #define TRASH_DIR   "/.sdtrash"
 #define TRASH_SIDE  ".origin~"
 static bool under_trash(const char* path);   /* true if path is /.sdtrash or inside it */
+static int  goto_path(const char* path, char* name_out);   /* defined after apply_find_sel */
 
 /* ---- layout (pixels) ---------------------------------------------------- */
 #define HDR_Y         0
@@ -1740,10 +1741,21 @@ static bool find_modal(void) {
 static bool actions_menu(const FsEntry* e) {
   enum { A_OPEN, A_VIEW, A_EDIT, A_INFO, A_FOLDERSIZE, A_FIND, A_RENAME, A_COPY, A_CUT, A_DUPLICATE,
          A_PASTE, A_PIN, A_RDO, A_HID, A_DELETE, A_NEWFILE, A_MKDIR, A_SELECT, A_TRASH,
-         A_SETTINGS, A_REBOOT };
-  int  ids[24];
-  char labels[24][32];
+         A_SETTINGS, A_REBOOT, A_ADDSC, A_RMSC,
+         A_SC0 = 100 };                    /* A_SC0 + i = the i-th START-menu shortcut */
+  /* up to SC_MAX shortcuts + every action; static (EWRAM), never on the stack */
+  static int  EWRAM_BSS ids[SC_MAX + 32];
+  static char EWRAM_BSS labels[SC_MAX + 32][112];
   int  ni = 0;
+
+  /* saved shortcuts are the first rows of the menu, in every folder */
+  for (int i = 0; i < pl_count(&g_shortcuts) && i < SC_MAX; i++) {
+    char nm[112];
+    const char* sp = pl_get(&g_shortcuts, i);
+    ui_truncate(nm, strcmp(sp, "/") ? base_name(sp) : "/", 26);
+    ids[ni] = A_SC0 + i; siprintf(labels[ni++], "> %s", nm);
+  }
+  const int nsc = ni;
 
   if (e) {
     if (!e->is_dir) {
@@ -1777,6 +1789,15 @@ static bool actions_menu(const FsEntry* e) {
                ? (e->is_dir ? "Move folder to Trash" : "Move file to Trash")
                : (e->is_dir ? "Delete folder (perm)" : "Delete file (perm)"));
     }
+    {
+      char sp[PATH_MAX];
+      bool ok = e ? path_join(g_cwd, e->name, sp) : (strcpy(sp, g_cwd), true);
+      if (ok) {
+        bool have = pl_find(&g_shortcuts, sp) >= 0;
+        ids[ni] = have ? A_RMSC : A_ADDSC;
+        strcpy(labels[ni++], have ? "Remove shortcut" : "Add shortcut");
+      }
+    }
     ids[ni] = A_NEWFILE; strcpy(labels[ni++], "New file here");
     ids[ni] = A_MKDIR;   strcpy(labels[ni++], "New folder here");
     ids[ni] = A_SELECT;  strcpy(labels[ni++], "Select multiple");
@@ -1789,7 +1810,7 @@ static bool actions_menu(const FsEntry* e) {
   /* The list can hold up to ~19 items (ids[24] cap) but the panel fits 9; scroll
    * a sel/top window like the browser list so rows never spill past the box. */
   const int VIS = 9, ROW0 = 18, PITCH = 12;
-  int sel = 0, top = 0;
+  int sel = nsc < ni ? nsc : 0, top = 0;     /* start on the first regular action */
   bool dirty = true;
   while (1) {
     if (ni == 0) sel = 0; else if (sel >= ni) sel = ni - 1;
@@ -1816,17 +1837,39 @@ static bool actions_menu(const FsEntry* e) {
       if (top + VIS < ni)  ui_text(230, ROW0 + (VIS - 1) * PITCH, UI_DIM, "v");   /* more below */
       if (!can_write() && ni <= VIS)
         ui_text(4, ROW0 + ni * PITCH + 6, UI_DIM, "Writes need EZ-Flash Omega");
-      ui_text(2, FOOT_Y, UI_DIM, "A do   B back");
+      ui_text(2, FOOT_Y, UI_DIM, (ni && ids[sel] >= A_SC0)
+                                   ? (can_write() ? "A go  SEL remove  B back" : "A go   B back")
+                                   : "A do   B back");
       dirty = false;
     }
     vsync();
     u16 mv  = key_repeat(KEY_UP | KEY_DOWN);
-    u16 hit = key_hit(KEY_A | KEY_B);
+    u16 hit = key_hit(KEY_A | KEY_B | KEY_SELECT);
     if (!mv && !hit) continue;
     dirty = true;
     if (hit & KEY_B) return false;
     else if (mv & KEY_DOWN) { if (ni) sel = (sel + 1) % ni; }
     else if (mv & KEY_UP)   { if (ni) sel = (sel == 0) ? ni - 1 : sel - 1; }
+    else if ((hit & KEY_SELECT) && ni && ids[sel] >= A_SC0) {   /* SELECT on a shortcut row removes it */
+      if (can_write()) {
+        (void)pl_remove_at(&g_shortcuts, ids[sel] - A_SC0);
+        if (!save_pathlist(SHORTCUTS_PATH, &g_shortcuts)) msg_screen("Shortcut removed", UI_WARN, "but not saved to SD");
+      }
+      return false;                                /* labels are stale: close the menu */
+    }
+    else if ((hit & KEY_A) && ni && ids[sel] >= A_SC0) {          /* jump to the shortcut */
+      int si = ids[sel] - A_SC0;
+      char path[PATH_MAX], nm[FS_NAME_CAP];
+      strcpy(path, pl_get(&g_shortcuts, si));
+      int r = goto_path(path, nm);
+      if (r > 0) return true;                      /* navigated: rescan */
+      if (r == 0) msg_screen("Reserved folder", UI_DIM, "Use the Trash action");
+      else if (can_write() && confirm("Not found.", "Remove shortcut?")) {
+        (void)pl_remove_at(&g_shortcuts, si);
+        (void)save_pathlist(SHORTCUTS_PATH, &g_shortcuts);
+        return false;
+      } else if (!can_write()) msg_screen("Not found", UI_WARN, path);
+    }
     else if ((hit & KEY_A) && ni) {
       switch (ids[sel]) {
         case A_OPEN: {     /* type-specific viewer (e.g. image) via the registry */
@@ -1858,6 +1901,17 @@ static bool actions_menu(const FsEntry* e) {
           if (!save_pathlist(PINS_PATH, &g_pins)) msg_screen("Pin changed", UI_WARN, "but not saved to SD");
           strcpy(g_find_sel, e->name);
           return true;
+        }
+        case A_ADDSC: case A_RMSC: {
+          char sp[PATH_MAX];
+          if (e ? !path_join(g_cwd, e->name, sp) : (strcpy(sp, g_cwd), false)) { msg_screen("Path too long", UI_WARN, NULL); break; }
+          if (ids[sel] == A_RMSC) (void)pl_remove(&g_shortcuts, sp);
+          else if (pl_add(&g_shortcuts, sp) == PL_FULL) {
+            msg_screen(pl_count(&g_shortcuts) >= SC_MAX ? "Shortcut list full (16)" : "Shortcut list full (memory)", UI_WARN, NULL);
+            break;
+          }
+          if (!save_pathlist(SHORTCUTS_PATH, &g_shortcuts)) msg_screen("Shortcut changed", UI_WARN, "but not saved to SD");
+          return false;                            /* menu rebuilt next time it opens */
         }
         case A_INFO:       properties_screen(e);              break;
         case A_FOLDERSIZE: do_foldersize(e);                  break;
