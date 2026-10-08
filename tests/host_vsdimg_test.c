@@ -3,7 +3,7 @@
  * ff.c the GBA links, over tests/hostfat's ramdisk.c) and mounts the same image a
  * second time through a fresh f_mount to prove FatFs on the "GBA side" reads back
  * exactly what the factory wrote -- there is no second FAT implementation anywhere in
- * this path (docs/kb/virtual-sd-harness.md). tools/build_vsd_host.sh builds and runs it.
+ * this path (tools/vsd.py). tools/build_vsd_host.sh builds and runs it.
  */
 #include <stdio.h>
 #include <stdlib.h>

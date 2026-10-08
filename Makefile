@@ -112,7 +112,7 @@ CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions
 ASFLAGS := $(ARCH) $(INCLUDE)
 LDFLAGS := $(ARCH) -Wl,--print-memory-usage,-Map,$(PROJ).map
 
-# --- emulator-only virtual-SD build: `make vsd` (docs/kb/virtual-sd-harness.md) ---
+# --- emulator-only virtual-SD build: `make vsd` (tools/vsd.py) ---
 # Defines VSD_ENABLE, builds into its own directory and file name so the shipped
 # build is never contaminated. Shipped `make` is unchanged.
 ifeq ($(strip $(VSD)), 1)

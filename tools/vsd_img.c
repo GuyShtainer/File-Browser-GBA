@@ -1,5 +1,5 @@
 /*
- * vsd_img -- the virtual-SD image factory (docs/kb/virtual-sd-harness.md). See
+ * vsd_img -- the virtual-SD image factory (tools/vsd.py). See
  * vsd_img.h for the entry points. "Never a second FAT implementation": this tool links
  * the project's own lib/fatfs/ff.c over tests/hostfat/ramdisk.c.
  *

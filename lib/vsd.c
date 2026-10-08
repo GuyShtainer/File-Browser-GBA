@@ -1,6 +1,6 @@
 /*
  * vsd -- the harness-hosted "virtual SD" mailbox. See vsd.h for the contract and
- * docs/kb/virtual-sd-harness.md for the full protocol. The whole body sits under
+ * lib/vsd.h for the full protocol. The whole body sits under
  * #ifdef VSD_ENABLE -- no symbol from this file exists in a shipped build.
  */
 #include "vsd.h"

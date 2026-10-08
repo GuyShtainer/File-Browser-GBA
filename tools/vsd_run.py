@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Guy Shtainer
-"""vsd_run.py -- generic runner for the virtual-SD harness (docs/kb/virtual-sd-harness.md).
+"""vsd_run.py -- generic runner for the virtual-SD harness (tools/vsd.py).
 
 Boots a ROM built with -DVSD_ENABLE in mGBA (python bindings), serves its mailbox from a
 FAT16 image (tools/vsd.py), injects keys, takes screenshots, and diffs the card before

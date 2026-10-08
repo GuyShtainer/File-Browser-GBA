@@ -2,7 +2,7 @@
 #define VSD_IMG_H
 #include <stdio.h>
 /*
- * vsd_img -- the virtual-SD image factory (docs/kb/virtual-sd-harness.md). Builds,
+ * vsd_img -- the virtual-SD image factory (tools/vsd.py). Builds,
  * inspects and patches a FAT16 volume file through the project's OWN lib/fatfs (the
  * exact ff.c the GBA links, over tests/hostfat's ramdisk.c), never a second FAT
  * implementation. See tools/vsd_img.c's header comment for the build recipe.

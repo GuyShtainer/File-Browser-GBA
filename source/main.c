@@ -3121,7 +3121,7 @@ int main(void) {
 
 #ifdef VSD_ENABLE
   /* Emulator-only build (make vsd): the sector transport is the host-served virtual SD
-   * (docs/kb/virtual-sd-harness.md); flashcartio_activate() would find no cart in mGBA. */
+   * (lib/vsd.h); flashcartio_activate() would find no cart in mGBA. */
   show_msg("Attaching virtual SD...", NULL);
   if (!vsd_attach()) halt_msg("VSD: no host attached");
   log_line("flashcart: virtual SD");

@@ -5,7 +5,7 @@
 
 `vsd_img list IMG` prints one sorted "path size crc32" line per file. A chain's
 assertion is not "the run didn't crash", it is: after this run, exactly this set of
-paths appeared / changed / vanished, and nothing else did (docs/kb/virtual-sd-harness.md:
+paths appeared / changed / vanished, and nothing else did (tools/vsd.py:
 the diff carries size+crc32 per file, not just a path list, precisely so a same-length
 no-op write cannot slip past it).
 

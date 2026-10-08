@@ -5,7 +5,7 @@
 #include <stdbool.h>
 
 /*
- * vsd -- the harness-hosted "virtual SD" mailbox (docs/kb/virtual-sd-harness.md).
+ * vsd -- the harness-hosted "virtual SD" mailbox (protocol: see below).
  * A 32-byte EWRAM mailbox that the host (Python driving mGBA through its bindings)
  * serves from a FAT16 image, one transaction per emulated frame. Wired into the
  * flashcartio sector dispatch by exactly two seams (flashcartio_read_sector /

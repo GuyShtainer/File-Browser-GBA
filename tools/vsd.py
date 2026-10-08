@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Guy Shtainer
-"""vsd.py -- the harness-hosted virtual SD server (docs/kb/virtual-sd-harness.md).
+"""vsd.py -- the harness-hosted virtual SD server (tools/vsd.py).
 
 Serves lib/vsd.c's 32-byte EWRAM mailbox (VsdBox) out of a flat, sector-addressed
 FAT16 image built by tools/vsd_img.c, one transaction per emulated frame. This module
