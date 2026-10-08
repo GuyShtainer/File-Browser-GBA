@@ -24,7 +24,7 @@ static BYTE  s_work[1024];
 static unsigned char NEWB[CAP], OLDB[CAP], RB[CAP];
 
 /* ---- fault injection (the wrappers) ------------------------------------- */
-enum { K_OPEN, K_RENAME, K_UNLINK, K_RENAME_LIE };   /* LIE: returns FR_OK without renaming (a card that acks a dropped metadata write) */
+enum { K_OPEN, K_RENAME, K_UNLINK, K_RENAME_LIE, K_RENAME_DROP };   /* LIE: returns FR_OK without renaming (a card that acks a dropped metadata write) */
 typedef struct { int kind; const char* a_suf; const char* b_suf; int skip; int armed; int hits; } Rule;
 static Rule rules[4];
 static int tamper_mode;   /* 0 none, 1 flip last, 2 flip first, 3 short by 1, 4 long by 1 */
@@ -75,6 +75,7 @@ FRESULT wrap_f_open(FIL* fp, const TCHAR* path, BYTE mode) {
 FRESULT wrap_f_rename(const TCHAR* a, const TCHAR* b) {
   if (rule_hit(K_RENAME, a, b)) return FR_DISK_ERR;
   if (rule_hit(K_RENAME_LIE, a, b)) return FR_OK;
+  if (rule_hit(K_RENAME_DROP, a, b)) return f_unlink(a);   /* acked; the source is lost, the target untouched */
   return f_rename(a, b);
 }
 FRESULT wrap_f_unlink(const TCHAR* p) {
@@ -306,6 +307,40 @@ static void t_rename_lie(void) {
   fresh_card(2048); put(P, OLDB, 2000);
   fr = fsop_save_buffer(P, NEWB, 2000, true);
   CHECK(fr == FR_OK && is(P, NEWB, 2000) && !exists(TMP), "no lie: saved, fr=%d", (int)fr);
+  /* 5d. same length; path -> .bak~ acked as a no-op, .txtnew~ -> path acked but drops the source:
+   * a size-only recheck passes and the temp is gone, so ONLY the byte compare catches it */
+  fill(NEWB, 2000, 11);
+  fresh_card(2048); put(P, OLDB, 2000);
+  rule_add(K_RENAME_LIE, NULL, ".bak~", 0);
+  rule_add(K_RENAME_DROP, ".txtnew~", ".txt", 0);
+  fr = fsop_save_buffer(P, NEWB, 2000, true);
+  CHECK(fr == FSOP_ERR_UNVERIFIED, "drop: unverified, fr=%d", (int)fr);
+  CHECK(is(P, OLDB, 2000) && !exists(TMP) && !exists(BAK), "drop: original in place, no temp, no bak");
+}
+
+/* 5e. Sector-level liar with FatFs's window LIVE (fsop_set_fs set, as on the cart): every rd_lie_after
+ * point of a single-cluster save. dummies=0 keeps every entry in the window's one root sector (the
+ * pins.txt case: only the cache drop catches it); dummies=15 puts path and temp in different sectors so
+ * one k leaves both names on one chain (only the temp-gone check catches it). */
+static void t_lie_after_cached(int dummies) {
+  unsigned k, W, n_false = 0; unsigned long w0; int i; FRESULT fr; char nm[24];
+  fill(OLDB, 100, 2); fill(NEWB, 100, 3);
+  fsop_set_fs(&s_fs);
+  for (k = 0;; k++) {
+    fresh_card(2048);
+    for (i = 0; i < dummies; i++) { sprintf(nm, "/dummy_%02d.txt", i); put(nm, OLDB, 1); }
+    put(P, OLDB, 100);
+    if (k == 0) { w0 = rd_writes; fr = fsop_save_buffer(P, NEWB, 100, true);
+                  CHECK(fr == FR_OK, "lie sweep %d: control save, fr=%d", dummies, (int)fr);
+                  W = (unsigned)(rd_writes - w0); continue; }
+    if (k - 1 > W) break;
+    rd_lie_after = (long)(k - 1);
+    fr = fsop_save_buffer(P, NEWB, 100, true);
+    rd_lie_after = -1; rd_lie_writes = 0; remount();
+    if (fr == FR_OK && !(is(P, NEWB, 100) && !exists(TMP))) n_false++;
+  }
+  fsop_set_fs(NULL);
+  CHECK(n_false == 0, "lie sweep %d dummies: %u false 'saved' with the FatFs window live", dummies, n_false);
 }
 
 static void t_disk_full(void) {
@@ -338,7 +373,7 @@ static void t_disk_full(void) {
 
 int main(void) {
   t_sizes(); t_verify_fail(); t_leftover(); t_crosslink(); t_zero_pair();
-  t_readonly_bak(); t_rename_faults(); t_rename_lie(); t_disk_full();
+  t_readonly_bak(); t_rename_faults(); t_rename_lie(); t_lie_after_cached(0); t_lie_after_cached(15); t_disk_full();
   printf("host_save_test: %d passed, %d failed\n", passed, fails);
   rd_free();
   return fails ? 1 : 0;
