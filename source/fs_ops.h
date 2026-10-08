@@ -110,6 +110,24 @@ typedef struct { uint32_t off; uint8_t val; } HexEdit;
  * Returns FR_OK, or FR_INT_ERR if the written temp fails verification. */
 FRESULT fsop_apply_edits(const char* path, const HexEdit* edits, int n);
 
+/* Private fsop_save_buffer error codes (outside FatFs's FRESULT range). */
+#define FSOP_ERR_LEFTOVER ((FRESULT)100)   /* "<path>.txtnew~" already exists   */
+#define FSOP_ERR_SHARED   ((FRESULT)101)   /* "<path>.bak~" shares data with path */
+
+/* True when files `a` and `b` both exist and start at the same non-zero cluster
+ * (one cluster chain with two names - what a cut inside f_rename can leave). */
+bool fsop_same_chain(const char* a, const char* b);
+
+/* Verified save of an in-memory buffer to `path`: writes "<path>.txtnew~",
+ * re-reads it and memcmp's against `data`, then (if `path` exists) renames the
+ * original to "<path>.bak~" and the temp into place, restoring on failure. With
+ * keep_backup=false the .bak~ is removed after success. Refuses (original
+ * untouched) with FSOP_ERR_LEFTOVER if the temp name already exists, and with
+ * FSOP_ERR_SHARED if an existing .bak~ shares a cluster chain with `path`.
+ * Omega-only (the caller gates on can_write). */
+FRESULT fsop_save_buffer(const char* path, const uint8_t* data, uint32_t len,
+                         bool keep_backup);
+
 /* Delete a file or an entire directory tree. For a non-empty directory it
  * recursively removes the contents first, using an EXPLICIT stack (never C
  * recursion — the GBA IWRAM stack is only 32 KiB) bounded by
